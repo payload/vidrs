@@ -1,4 +1,10 @@
-use std::time::*;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::*,
+};
 use tokio::sync::{broadcast, mpsc};
 
 mod camera;
@@ -19,12 +25,22 @@ async fn main() -> anyhow::Result<()> {
     let (frames_tx, frames) = mpsc::channel(1);
     let (packets_tx, packets) = mpsc::channel(3);
     let run_camera_task = tokio::spawn(run_camera(exit_tx.clone(), exit.resubscribe(), frames_tx));
-    let encode_frames_task = tokio::spawn(encode_frames(frames, packets_tx));
+
+    let picture_loss_indicator = Arc::new(AtomicBool::new(false));
+    let encode_frames_task = tokio::spawn(encode_frames(
+        frames,
+        packets_tx,
+        picture_loss_indicator.clone(),
+    ));
 
     let (exchange_tx, exchange_rx) = mpsc::channel(1);
     let http_testapp_task =
         tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
-    let webrtc_task = tokio::spawn(webrtc::webrtc_tasks(exchange_rx, packets));
+    let webrtc_task = tokio::spawn(webrtc::webrtc_tasks(
+        exchange_rx,
+        packets,
+        picture_loss_indicator.clone(),
+    ));
 
     let _ = tokio::join!(
         run_camera_task,
@@ -84,13 +100,14 @@ impl std::fmt::Debug for EncodedFrame {
 async fn encode_frames(
     mut frames: mpsc::Receiver<camera::Frame>,
     packets: mpsc::Sender<EncodedFrame>,
+    picture_loss_indicator: Arc<AtomicBool>,
 ) {
     let mut start_time = None;
     let mut encoder = None;
 
     while let Some(frame) = frames.recv().await {
         let format = frame.format();
-        encoder = reconfigure_encoder(encoder, format);
+        encoder = reconfigure_encoder(encoder, &format);
 
         let Some(encoder) = encoder.as_mut() else { panic!("no enocder"); };
         let start_time = start_time.get_or_insert_with(|| Instant::now());
@@ -99,10 +116,15 @@ async fn encode_frames(
         let data = frame.pixels().data;
 
         let frames: Vec<_> = encoder
-            .encode(pts, data, false)
+            .encode(pts, data, picture_loss_indicator.load(Ordering::Relaxed))
             .expect("encoded packets")
-            .map(|frame| EncodedFrame {
-                bytes: bytes::Bytes::copy_from_slice(frame.data),
+            .map(|frame| {
+                if frame.key {
+                    log::debug!("Encoded key frame: {:?}", format)
+                }
+                EncodedFrame {
+                    bytes: bytes::Bytes::copy_from_slice(frame.data),
+                }
             })
             .collect();
 
@@ -117,7 +139,7 @@ async fn encode_frames(
 
 fn reconfigure_encoder(
     encoder: Option<codec::Encoder>,
-    format: camera::SampleFormat,
+    format: &camera::SampleFormat,
 ) -> Option<codec::Encoder> {
     if let Some(encoder) = encoder {
         if encoder.width == format.width as usize && encoder.height == format.height as usize {

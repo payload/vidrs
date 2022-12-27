@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -13,6 +14,7 @@ pub use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 pub use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 pub use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtcp::header::{PacketType, FORMAT_PLI};
 pub use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 pub use webrtc::rtp;
 pub use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
@@ -75,6 +77,7 @@ pub enum RtcError {
 pub async fn webrtc_tasks(
     mut exchange_rx: mpsc::Receiver<OfferAnswerExchange>,
     mut encoded_frames_rx: mpsc::Receiver<EncodedFrame>,
+    picture_loss_indicator: Arc<AtomicBool>,
 ) -> webrtc::error::Result<()> {
     let api = create_webrtc_api().expect("webrtc api");
     let config = rtc_configuration();
@@ -87,7 +90,7 @@ pub async fn webrtc_tasks(
     // let peer_connection2 = peer_connection.clone();
     let on_setup = (|| async {
         let rtp_sender = peer_connection.add_track(output_track_pc).await?;
-        tokio::spawn(process_rtcp(rtp_sender.clone()));
+        tokio::spawn(process_rtcp(rtp_sender.clone(), picture_loss_indicator));
         let (offer, answer_tx) = exchange_rx.recv().await.ok_or(RtcError::NoOffer)?;
         peer_connection.set_remote_description(offer).await?;
         let answer = peer_connection.create_answer(None).await?;
@@ -255,7 +258,16 @@ fn create_vp8_track() -> Arc<TrackLocalStaticSample> {
 }
 
 /// Need to read rtcp to run the internal logic of webrtc-rs of processing rtcp.
-async fn process_rtcp(rtp_sender: Arc<RTCRtpSender>) {
-    let mut rtcp_buf = vec![0u8; 1500];
-    while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+async fn process_rtcp(rtp_sender: Arc<RTCRtpSender>, picture_loss_indicator: Arc<AtomicBool>) {
+    while let Ok((packets, _)) = rtp_sender.read_rtcp().await {
+        for packet in packets {
+            if packet.header().packet_type == PacketType::PayloadSpecificFeedback
+                && packet.header().length == FORMAT_PLI as u16
+            {
+                if picture_loss_indicator.swap(true, Ordering::Relaxed) == false {
+                    log::debug!("Picture loss indicator set.");
+                }
+            }
+        }
+    }
 }
