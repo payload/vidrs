@@ -5,7 +5,7 @@ mod camera;
 mod codec;
 mod webrtc;
 
-const DEBUG: bool = false;
+const DEBUG: bool = true;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,11 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let (exchange_tx, exchange_rx) = mpsc::channel(1);
     let http_testapp_task =
         tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
-    let webrtc_task = tokio::spawn(webrtc::webrtc_tasks(
-        exchange_rx,
-        packets,
-        exit.resubscribe(),
-    ));
+    let webrtc_task = tokio::spawn(webrtc::webrtc_tasks(exchange_rx, packets));
 
     let _ = tokio::join!(
         run_camera_task,

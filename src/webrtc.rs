@@ -62,10 +62,19 @@ pub async fn http_testapp(
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum RtcError {
+    #[error("No offer received")]
+    NoOffer,
+    #[error("Cant send answer")]
+    AnswerSendError,
+    #[error("WebRTC error")]
+    WebRtc(#[from] webrtc::Error),
+}
+
 pub async fn webrtc_tasks(
     mut exchange_rx: mpsc::Receiver<OfferAnswerExchange>,
     mut encoded_frames_rx: mpsc::Receiver<EncodedFrame>,
-    mut exit: broadcast::Receiver<()>,
 ) -> webrtc::error::Result<()> {
     let api = create_webrtc_api().expect("webrtc api");
     let config = rtc_configuration();
@@ -74,39 +83,37 @@ pub async fn webrtc_tasks(
     let mut peer_connection_state_change = PeerConnectionStateChange::new(&peer_connection);
     let output_track = create_vp8_track();
     let output_track_pc = Arc::clone(&output_track);
-    let rtp_sender = peer_connection.add_track(output_track_pc).await?;
 
-    tokio::spawn(process_rtcp(rtp_sender.clone()));
+    // let peer_connection2 = peer_connection.clone();
+    let on_setup = (|| async {
+        let rtp_sender = peer_connection.add_track(output_track_pc).await?;
+        tokio::spawn(process_rtcp(rtp_sender.clone()));
+        let peer_connection_exit = peer_connection.clone();
+        let (offer, answer_tx) = exchange_rx.recv().await.ok_or(RtcError::NoOffer)?;
+        peer_connection.set_remote_description(offer).await?;
+        let answer = peer_connection.create_answer(None).await?;
+        let mut gather_complete = peer_connection.gathering_complete_promise().await;
+        peer_connection.set_local_description(answer).await?;
+        let _ = gather_complete.recv().await; // no trickle ICE
+        let answer = peer_connection.local_description().await.unwrap();
+        answer_tx
+            .send(answer)
+            .await
+            .map_err(|_| RtcError::AnswerSendError)?;
+        Ok::<(), RtcError>(())
+    })()
+    .await;
 
-    let peer_connection_exit = peer_connection.clone();
-    tokio::spawn(async move {
-        let _ = exit.recv().await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        // TODO hey I moved this close() to the exit signal in another task. This could break the whole webrtc handling when exit is early.
-        peer_connection_exit.close().await.expect("PC close");
-    });
-
-    let (offer, answer_tx) = exchange_rx.recv().await.expect("offer");
-    peer_connection.set_remote_description(offer).await?;
-
-    let answer = peer_connection.create_answer(None).await?;
-    println!("answer");
-
-    let mut gather_complete = peer_connection.gathering_complete_promise().await;
-    println!("gather 1");
-
-    peer_connection.set_local_description(answer).await?;
-    let _ = gather_complete.recv().await; // no trickle ICE
-    println!("gather 2");
-
-    let answer = peer_connection.local_description().await.unwrap();
-    println!("local desc");
-
-    answer_tx.send(answer).await?;
-    println!("answer send");
+    if let Err(err) = on_setup {
+        log::debug!("WebRTC setup failed. End. ({})", err);
+        peer_connection
+            .close()
+            .await
+            .unwrap_or_else(|err| log::error!("{:?}", err));
+        return Ok(());
+    }
 
     let ms33 = Duration::from_millis(33);
-
     while let Some(frame) = encoded_frames_rx.recv().await {
         let sample = Sample {
             data: frame.bytes,
