@@ -456,6 +456,7 @@ name = "vid-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "env-libvpx-sys",
  "env_logger",
  "icrate",

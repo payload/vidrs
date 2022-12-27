@@ -329,6 +329,11 @@ impl<'a> Iterator for Packets<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             unsafe {
+                // https://chromium.googlesource.com/webm/libvpx/+/mcw2/vpx/vpx_encoder.h
+                // ```
+                // * The data buffers returned from this function are only guaranteed to be
+                // * valid until the application makes another call to any vpx_codec_* function.
+                // ```
                 let pkt = vpx_codec_get_cx_data(self.ctx, &mut self.iter);
                 if pkt.is_null() {
                     return None;

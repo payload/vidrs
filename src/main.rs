@@ -16,11 +16,19 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(exit_on_ctrl_c(exit_tx.clone()));
 
     let (frames_tx, frames) = mpsc::channel(1);
+    let (packets_tx, packets) = std::sync::mpsc::sync_channel(0);
     let run_camera_task = tokio::spawn(run_camera(exit_tx.clone(), exit.resubscribe(), frames_tx));
-    let encode_frames_task = tokio::spawn(encode_frames(frames));
+    let encode_frames_task = tokio::spawn(encode_frames(frames, packets_tx));
+    let webrtc_publishing_task = tokio::spawn(webrtc_publishing(packets));
 
     let _ = tokio::join!(run_camera_task, encode_frames_task);
     Ok(())
+}
+
+async fn webrtc_publishing(packets: std::sync::mpsc::Receiver<EncodedFrame>) {
+    while let Ok(frame) = packets.recv() {
+        log::debug!("PING");
+    }
 }
 
 async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
@@ -56,7 +64,14 @@ async fn run_camera(
     let _ = exit_tx.send(());
 }
 
-async fn encode_frames(mut frames: mpsc::Receiver<camera::Frame>) {
+struct EncodedFrame {
+    bytes: bytes::Bytes,
+}
+
+async fn encode_frames(
+    mut frames: mpsc::Receiver<camera::Frame>,
+    packets: std::sync::mpsc::SyncSender<EncodedFrame>,
+) {
     let mut start_time = None;
     let mut encoder = None;
 
@@ -69,13 +84,18 @@ async fn encode_frames(mut frames: mpsc::Receiver<camera::Frame>) {
 
         let pts = start_time.elapsed().as_millis() as _;
         let data = frame.pixels().data;
-        for packet in encoder.encode(pts, data, false).expect("encoded packets") {
+        for frame in encoder.encode(pts, data, false).expect("encoded packets") {
             log::debug!(
                 "{} {} Bytes {}",
-                packet.pts,
-                packet.data.len(),
-                ["", "KEY"][packet.key as usize]
+                frame.pts,
+                frame.data.len(),
+                ["", "KEY"][frame.key as usize]
             );
+            packets
+                .send(EncodedFrame {
+                    bytes: bytes::Bytes::copy_from_slice(frame.data),
+                })
+                .expect("send encoded packet");
         }
     }
 }
