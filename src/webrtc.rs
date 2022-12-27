@@ -74,7 +74,7 @@ pub enum RtcError {
     WebRtc(#[from] webrtc::Error),
 }
 
-pub async fn webrtc_tasks(
+pub async fn webrtc_testapp(
     mut exchange_rx: mpsc::Receiver<OfferAnswerExchange>,
     mut encoded_frames_rx: mpsc::Receiver<EncodedFrame>,
     picture_loss_indicator: Arc<AtomicBool>,

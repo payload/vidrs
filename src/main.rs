@@ -19,26 +19,44 @@ async fn main() -> anyhow::Result<()> {
         init_logging()
     }
 
-    let (exit_tx, exit) = broadcast::channel(1);
-    tokio::spawn(exit_on_ctrl_c(exit_tx.clone()));
+    /*
 
+    Several tasks get spawned communicating with each other through channels.
+    * run_camera_task gets frames from the default camera with some 4:2:0 pixel format
+    * encode_frames_task throws frames into libvpx VP8 encoder and get `EncodedFrame`s out
+    * http_testapp_task is a HTTP server serving an index.html testapp on usuall http://localhost:8080
+    * http_testapp_task also provides a SDP offer answer exchange endpoint, for a single exchange though
+    * the SDP offer exchange request goes into the webrtc_testapp_task which eventually produces an SDP answer as a response
+    * webrtc_testapp_task is setting up a peer connection, an output track and takes additionally encoded frames and writes them on the output track
+
+    On pressing Ctrl-C the camera stops.
+    When the camera task ends, the corresponding channel gets closed to, which will close the encode frames task.
+    Because every channel closes when the task ends, this closing and ending eventually propagetes through all tasks.
+    Every task can so deal with closing and shutting down.
+     */
+
+    let (exit_tx, exit) = broadcast::channel(1);
     let (frames_tx, frames) = mpsc::channel(1);
-    let (packets_tx, packets) = mpsc::channel(3);
+    let (encoded_frames_tx, encoded_frames) = mpsc::channel(3);
+    let picture_loss_indicator = Arc::new(AtomicBool::new(false));
+    let (exchange_tx, exchange_rx) = mpsc::channel(1);
+
+    let _ = tokio::spawn(exit_on_ctrl_c(exit_tx.clone()));
+
     let run_camera_task = tokio::spawn(run_camera(exit_tx.clone(), exit.resubscribe(), frames_tx));
 
-    let picture_loss_indicator = Arc::new(AtomicBool::new(false));
     let encode_frames_task = tokio::spawn(encode_frames(
         frames,
-        packets_tx,
+        encoded_frames_tx,
         picture_loss_indicator.clone(),
     ));
 
-    let (exchange_tx, exchange_rx) = mpsc::channel(1);
     let http_testapp_task =
         tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
-    let webrtc_task = tokio::spawn(webrtc::webrtc_tasks(
+
+    let webrtc_testapp_task = tokio::spawn(webrtc::webrtc_testapp(
         exchange_rx,
-        packets,
+        encoded_frames,
         picture_loss_indicator.clone(),
     ));
 
@@ -46,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
         run_camera_task,
         encode_frames_task,
         http_testapp_task,
-        webrtc_task
+        webrtc_testapp_task
     );
     Ok(())
 }
