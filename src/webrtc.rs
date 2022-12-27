@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::broadcast;
 
 pub use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -119,12 +119,20 @@ pub async fn webrtc_tasks(
     while let Some(frame) = encoded_frames_rx.recv().await {
         let sample = Sample {
             data: frame.bytes,
+            timestamp: SystemTime::now(),
             duration: ms33,
             ..Default::default()
         };
-        if let Err(err) = output_track.write_sample(&sample).await {
-            log::warn!("{}", err);
+        if frame.keyframe {
+            log::debug!("Output track, write keframe.");
         }
+        if let Err(err) = output_track.write_sample(&sample).await {
+            log::warn!("Output track, write sample failed: {}", err);
+        }
+    }
+
+    if let Err(err) = peer_connection.close().await {
+        log::warn!("Closing peer connection failed. {}", err);
     }
 
     // TODO kind of tell others that PC is connected and listen to PC is done

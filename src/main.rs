@@ -87,6 +87,7 @@ async fn run_camera(
 
 pub struct EncodedFrame {
     pub bytes: bytes::Bytes,
+    pub keyframe: bool,
 }
 
 impl std::fmt::Debug for EncodedFrame {
@@ -124,6 +125,7 @@ async fn encode_frames(
                 }
                 EncodedFrame {
                     bytes: bytes::Bytes::copy_from_slice(frame.data),
+                    keyframe: frame.key,
                 }
             })
             .collect();
