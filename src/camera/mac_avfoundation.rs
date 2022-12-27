@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::os::raw::c_char;
 
 pub use std::ffi::c_void;

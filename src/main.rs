@@ -37,11 +37,10 @@ async fn main() -> anyhow::Result<()> {
 
 async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
     if let Err(err) = tokio::signal::ctrl_c().await {
-        log::debug!("Ctrl-C signal handler broke. Exit.");
+        log::debug!("Ctrl-C signal handler broke. Exit. ({})", err);
     }
-    if let Err(err) = exit_tx.send(()) {
-        log::debug!("No exit receiver.");
-    }
+    // ignore err, because this means everybody who can exit, exitted already.
+    let _ = exit_tx.send(());
 }
 
 async fn run_camera(
@@ -59,8 +58,7 @@ async fn run_camera(
     while exit.is_empty() {
         let frame = cam.frames().next().unwrap();
         let frame_tx = frames_tx.clone();
-        let exit_tx = exit_tx.clone();
-        if let Err(err) = frame_tx.send(frame).await {
+        if frame_tx.send(frame).await.is_err() {
             log::debug!("No camera frame receiver. End.");
             break;
         }

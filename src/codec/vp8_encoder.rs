@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! Rust interface to libvpx encoder
 //!
 //! This crate provides a Rust API to use

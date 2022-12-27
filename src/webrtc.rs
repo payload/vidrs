@@ -80,7 +80,7 @@ pub async fn webrtc_tasks(
     let config = rtc_configuration();
 
     let peer_connection = Arc::new(api.new_peer_connection(config).await?);
-    let mut peer_connection_state_change = PeerConnectionStateChange::new(&peer_connection);
+    let _peer_connection_state_change = PeerConnectionStateChange::new(&peer_connection);
     let output_track = create_vp8_track();
     let output_track_pc = Arc::clone(&output_track);
 
@@ -88,7 +88,6 @@ pub async fn webrtc_tasks(
     let on_setup = (|| async {
         let rtp_sender = peer_connection.add_track(output_track_pc).await?;
         tokio::spawn(process_rtcp(rtp_sender.clone()));
-        let peer_connection_exit = peer_connection.clone();
         let (offer, answer_tx) = exchange_rx.recv().await.ok_or(RtcError::NoOffer)?;
         peer_connection.set_remote_description(offer).await?;
         let answer = peer_connection.create_answer(None).await?;
@@ -219,6 +218,7 @@ fn rtc_configuration() -> RTCConfiguration {
     }
 }
 
+#[allow(unused)]
 struct PeerConnectionStateChange {
     connected: tokio::sync::mpsc::Receiver<()>,
     done: tokio::sync::mpsc::Receiver<()>,
