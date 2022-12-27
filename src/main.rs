@@ -3,6 +3,7 @@ use tokio::sync::{broadcast, mpsc};
 
 mod camera;
 mod codec;
+mod webrtc;
 
 const DEBUG: bool = true;
 
@@ -20,6 +21,10 @@ async fn main() -> anyhow::Result<()> {
     let run_camera_task = tokio::spawn(run_camera(exit_tx.clone(), exit.resubscribe(), frames_tx));
     let encode_frames_task = tokio::spawn(encode_frames(frames, packets_tx));
     let webrtc_publishing_task = tokio::spawn(webrtc_publishing(packets));
+
+    let (exchange_tx, exchange_rx) = mpsc::channel(1);
+    let http_testapp_tqsk =
+        tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
 
     let _ = tokio::join!(run_camera_task, encode_frames_task);
     Ok(())
@@ -105,7 +110,7 @@ fn reconfigure_encoder(
     format: camera::SampleFormat,
 ) -> Option<codec::Encoder> {
     if let Some(encoder) = encoder {
-        if encoder.width == format.width as _ && encoder.height == format.height as _ {
+        if encoder.width == format.width as usize && encoder.height == format.height as usize {
             return Some(encoder);
         }
     }

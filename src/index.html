@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>cu2 - test app</title>
+</head>
+
+<body>
+    <video id="incomingVideo" autoplay></video>
+    <pre id="debugEvents"></pre>
+</body>
+<script type="module">
+    const stunGoogle = { urls: 'stun:stun.l.google.com:19302' };
+    const pc = new RTCPeerConnection({ iceServers: [stunGoogle] });
+    const endOfCandidates = new Promise(resolve => pc.addEventListener('icecandidate', (ev) => {
+        if (ev.candidate === null) resolve();
+    }));
+    const incomingStream = new Promise(resolve => pc.addEventListener('track', (ev) => {
+        resolve(ev.streams[0]);
+    }));
+
+    const debugEvents = document.getElementById('debugEvents');
+    const debugEvent = (name, mapEvent) => pc.addEventListener(name, (ev) => debugEvents.append(`${ev.timeStamp} ${name} ${mapEvent(ev)}\n`));
+    debugEvent('connectionstatechange', (ev) => pc.connectionState);
+    debugEvent('icecandidate', (ev) => ev.candidate?.candidate);
+    debugEvent('icecandidateerror', (ev) => '');
+    debugEvent('iceconnectionstatechange', (ev) => pc.iceConnectionState);
+    debugEvent('icegatheringstatechange', (ev) => pc.iceGatheringState);
+    debugEvent('negotiationneeded', (ev) => '');
+    debugEvent('signalingstatechange', (ev) => pc.signalingState);
+    debugEvent('track', (ev) => ev.track.kind);
+
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await endOfCandidates;
+
+    const { type, sdp } = pc.localDescription;
+    const response = await fetch('/sdp', { method: 'POST', body: JSON.stringify({ type, sdp }) });
+    /** @type RTCSessionDescription */
+    const answer = await response.json();
+
+    if (!answer.type === 'answer' && !/o=- \d+/g.test(answer.sdp)) {
+        console.error(`request /sdp response does not look like RTCSessionDescription answer: ${answer}`);
+        throw new Error('invalid sdp answer');
+    }
+
+    await pc.setRemoteDescription(answer);
+    const stream = await incomingStream;
+
+    /** @type HTMLVideoElement */
+    const video = document.getElementById('incomingVideo');
+    video.srcObject = stream;
+</script>
+
+</html>
