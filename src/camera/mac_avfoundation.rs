@@ -4,16 +4,19 @@ pub use std::ffi::c_void;
 pub use std::ptr::null;
 
 #[link(name = "AVFoundation", kind = "framework")]
-extern "C" {}
+extern "C" {
+    pub static AVVideoExpectedSourceFrameRateKey: Id<NSString, Shared>;
+    pub static AVVideoMaxKeyFrameIntervalDurationKey: Id<NSString, Shared>;
+}
 
 // libdispatch is loaded differently on MacOS and iOS. Have a look in https://docs.rs/dispatch
 // We don't care about the exact types.
 #[link(name = "System", kind = "dylib")]
 extern "C" {
-    pub fn dispatch_queue_create(name: *const c_char, attr: *const c_void) -> dispatch_queue_t;
-    pub fn dispatch_release(queue: dispatch_queue_t);
+    pub fn dispatch_queue_create(name: *const c_char, attr: *const c_void) -> DispatchQueueT;
+    pub fn dispatch_release(queue: DispatchQueueT);
 }
-type dispatch_queue_t = *mut NSObject; // <OS_dispatch_queue>
+type DispatchQueueT = *mut NSObject;
 
 #[link(name = "CoreVideo", kind = "framework")]
 extern "C" {
@@ -244,7 +247,7 @@ extern_methods! {
         fn set_video_settings(&mut self, settings: &NSDictionary<NSString, NSNumber>);
 
         #[method(setSampleBufferDelegate:queue:)]
-        fn set_sample_buffer_delegate(&mut self, delegate: &NSObject, queue: dispatch_queue_t);
+        fn set_sample_buffer_delegate(&mut self, delegate: &NSObject, queue: DispatchQueueT);
     }
 }
 
@@ -350,11 +353,11 @@ impl Camera {
         self.prefererred_format = format;
     }
 
-    pub fn start(&mut self, config: &Config) -> Result<()> {
+    pub fn start(&mut self) -> Result<()> {
         let input = AVCaptureDeviceInput::from_device(&self.device).unwrap();
         let mut output = AVCaptureVideoDataOutput::new();
 
-        let video_settings = self.video_settings(config);
+        let video_settings = self.video_settings(&Config {});
         output.set_video_settings(&video_settings);
 
         self.delegate = Some(MyVideoDataOutputDelegate::new(&self.frame_sender));
