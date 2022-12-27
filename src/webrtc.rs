@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::sync::broadcast;
 
 pub use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -27,6 +28,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::EncodedFrame;
+
 type OfferAnswerExchange = (RTCSessionDescription, mpsc::Sender<RTCSessionDescription>);
 
 pub async fn http_testapp(
@@ -47,12 +50,12 @@ pub async fn http_testapp(
         }
     });
     let shutdown = async move {
-        exit.recv().await;
+        let _ = exit.recv().await;
     };
 
     let server = Server::bind(&addr).serve(service);
 
-    println!("http://{}", server.local_addr());
+    println!("http://localhost:{}", server.local_addr().port());
 
     if let Err(err) = server.with_graceful_shutdown(shutdown).await {
         eprintln!("Server error: {}", err);
@@ -61,6 +64,7 @@ pub async fn http_testapp(
 
 pub async fn webrtc_tasks(
     mut exchange_rx: mpsc::Receiver<OfferAnswerExchange>,
+    mut encoded_frames_rx: mpsc::Receiver<EncodedFrame>,
     mut exit: broadcast::Receiver<()>,
 ) -> webrtc::error::Result<()> {
     let api = create_webrtc_api().expect("webrtc api");
@@ -74,22 +78,47 @@ pub async fn webrtc_tasks(
 
     tokio::spawn(process_rtcp(rtp_sender.clone()));
 
+    let peer_connection_exit = peer_connection.clone();
+    tokio::spawn(async move {
+        let _ = exit.recv().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        // TODO hey I moved this close() to the exit signal in another task. This could break the whole webrtc handling when exit is early.
+        peer_connection_exit.close().await.expect("PC close");
+    });
+
     let (offer, answer_tx) = exchange_rx.recv().await.expect("offer");
     peer_connection.set_remote_description(offer).await?;
 
     let answer = peer_connection.create_answer(None).await?;
+    println!("answer");
+
     let mut gather_complete = peer_connection.gathering_complete_promise().await;
+    println!("gather 1");
+
     peer_connection.set_local_description(answer).await?;
     let _ = gather_complete.recv().await; // no trickle ICE
+    println!("gather 2");
 
     let answer = peer_connection.local_description().await.unwrap();
+    println!("local desc");
+
     answer_tx.send(answer).await?;
+    println!("answer send");
+
+    let ms33 = Duration::from_millis(33);
+
+    while let Some(frame) = encoded_frames_rx.recv().await {
+        let sample = Sample {
+            data: frame.bytes,
+            duration: ms33,
+            ..Default::default()
+        };
+        if let Err(err) = output_track.write_sample(&sample).await {
+            log::warn!("{}", err);
+        }
+    }
 
     // TODO kind of tell others that PC is connected and listen to PC is done
-
-    let _ = exit.recv().await;
-
-    peer_connection.close();
     Ok(())
 }
 
@@ -123,16 +152,20 @@ async fn remote_handler(
             let (answer_tx, mut answer_rx) = mpsc::channel(1);
 
             let _ = exchange_tx.send((sdp, answer_tx)).await;
+            println!("exchange sent");
 
             if let Some(answer) = answer_rx.recv().await {
+                println!("answer received");
                 let answer_str =
                     serde_json::to_string(&answer).map_err(HttpTestappError::AnswerSdp)?;
                 let mut response = Response::new(answer_str.into());
                 *response.status_mut() = StatusCode::OK;
+                println!("answer response");
                 Ok(response)
             } else {
                 let mut response = Response::new(Body::empty());
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                println!("answer error");
                 Ok(response)
             }
         }

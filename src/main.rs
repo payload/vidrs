@@ -5,7 +5,7 @@ mod camera;
 mod codec;
 mod webrtc;
 
-const DEBUG: bool = true;
+const DEBUG: bool = false;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,23 +17,26 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(exit_on_ctrl_c(exit_tx.clone()));
 
     let (frames_tx, frames) = mpsc::channel(1);
-    let (packets_tx, packets) = std::sync::mpsc::sync_channel(0);
+    let (packets_tx, packets) = mpsc::channel(3);
     let run_camera_task = tokio::spawn(run_camera(exit_tx.clone(), exit.resubscribe(), frames_tx));
     let encode_frames_task = tokio::spawn(encode_frames(frames, packets_tx));
-    let webrtc_publishing_task = tokio::spawn(webrtc_publishing(packets));
 
     let (exchange_tx, exchange_rx) = mpsc::channel(1);
-    let http_testapp_tqsk =
+    let http_testapp_task =
         tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
+    let webrtc_task = tokio::spawn(webrtc::webrtc_tasks(
+        exchange_rx,
+        packets,
+        exit.resubscribe(),
+    ));
 
-    let _ = tokio::join!(run_camera_task, encode_frames_task);
+    let _ = tokio::join!(
+        run_camera_task,
+        encode_frames_task,
+        http_testapp_task,
+        webrtc_task
+    );
     Ok(())
-}
-
-async fn webrtc_publishing(packets: std::sync::mpsc::Receiver<EncodedFrame>) {
-    while let Ok(frame) = packets.recv() {
-        log::debug!("PING");
-    }
 }
 
 async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
@@ -69,13 +72,21 @@ async fn run_camera(
     let _ = exit_tx.send(());
 }
 
-struct EncodedFrame {
-    bytes: bytes::Bytes,
+pub struct EncodedFrame {
+    pub bytes: bytes::Bytes,
+}
+
+impl std::fmt::Debug for EncodedFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncodedFrame")
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
 }
 
 async fn encode_frames(
     mut frames: mpsc::Receiver<camera::Frame>,
-    packets: std::sync::mpsc::SyncSender<EncodedFrame>,
+    packets: mpsc::Sender<EncodedFrame>,
 ) {
     let mut start_time = None;
     let mut encoder = None;
@@ -96,11 +107,14 @@ async fn encode_frames(
                 frame.data.len(),
                 ["", "KEY"][frame.key as usize]
             );
-            packets
-                .send(EncodedFrame {
-                    bytes: bytes::Bytes::copy_from_slice(frame.data),
-                })
-                .expect("send encoded packet");
+            let bytes = bytes::Bytes::copy_from_slice(frame.data);
+            let packets = packets.clone();
+            tokio::spawn(async move {
+                packets
+                    .send(EncodedFrame { bytes })
+                    .await
+                    .expect("send encoded packet")
+            });
         }
     }
 }
