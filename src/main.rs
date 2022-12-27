@@ -60,12 +60,10 @@ async fn run_camera(
         let frame = cam.frames().next().unwrap();
         let frame_tx = frames_tx.clone();
         let exit_tx = exit_tx.clone();
-        tokio::spawn(async move {
-            if let Err(err) = frame_tx.send(frame).await {
-                println!("meh {}", err);
-                exit_tx.send(()).expect("exit");
-            }
-        });
+        if let Err(err) = frame_tx.send(frame).await {
+            log::debug!("No camera frame receiver. End.");
+            break;
+        }
     }
 
     cam.stop();

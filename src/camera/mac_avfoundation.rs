@@ -318,6 +318,8 @@ pub struct Camera {
     prefererred_format: Option<DeviceFormat>,
 }
 
+unsafe impl Send for Camera {}
+
 impl Camera {
     pub fn default() -> Result<Self> {
         let device = AVCaptureDevice::default_video().unwrap();
