@@ -36,8 +36,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
-    tokio::signal::ctrl_c().await.expect("ctrl_c");
-    let _ = exit_tx.send(());
+    if let Err(err) = tokio::signal::ctrl_c().await {
+        log::debug!("Ctrl-C signal handler broke. Exit.");
+    }
+    if let Err(err) = exit_tx.send(()) {
+        log::debug!("No exit receiver.");
+    }
 }
 
 async fn run_camera(
@@ -52,20 +56,21 @@ async fn run_camera(
     let format = frame.format();
     log::debug!("start_camera: first frame format: {:?}", format);
 
-    let start_time = Instant::now();
     while exit.is_empty() {
         let frame = cam.frames().next().unwrap();
-        log::debug!("{} {:?}", start_time.elapsed().as_millis(), frame.format());
-
         let frame_tx = frames_tx.clone();
+        let exit_tx = exit_tx.clone();
         tokio::spawn(async move {
-            frame_tx.send(frame).await.unwrap();
+            if let Err(err) = frame_tx.send(frame).await {
+                println!("meh {}", err);
+                exit_tx.send(()).expect("exit");
+            }
         });
     }
 
     cam.stop();
 
-    let _ = exit_tx.send(());
+    exit_tx.send(()).expect("exit");
 }
 
 pub struct EncodedFrame {
@@ -96,21 +101,20 @@ async fn encode_frames(
 
         let pts = start_time.elapsed().as_millis() as _;
         let data = frame.pixels().data;
-        for frame in encoder.encode(pts, data, false).expect("encoded packets") {
-            log::debug!(
-                "{} {} Bytes {}",
-                frame.pts,
-                frame.data.len(),
-                ["", "KEY"][frame.key as usize]
-            );
-            let bytes = bytes::Bytes::copy_from_slice(frame.data);
-            let packets = packets.clone();
-            tokio::spawn(async move {
-                packets
-                    .send(EncodedFrame { bytes })
-                    .await
-                    .expect("send encoded packet")
-            });
+
+        let frames: Vec<_> = encoder
+            .encode(pts, data, false)
+            .expect("encoded packets")
+            .map(|frame| EncodedFrame {
+                bytes: bytes::Bytes::copy_from_slice(frame.data),
+            })
+            .collect();
+
+        for frame in frames {
+            if let Err(err) = packets.send(frame).await {
+                log::debug!("No encoded frame receiver. End encoding frames. {}", err);
+                return;
+            }
         }
     }
 }
