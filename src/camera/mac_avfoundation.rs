@@ -10,9 +10,10 @@ extern "C" {}
 // We don't care about the exact types.
 #[link(name = "System", kind = "dylib")]
 extern "C" {
-    pub fn dispatch_queue_create(name: *const c_char, attr: *const c_void) -> *const c_void;
-    pub fn dispatch_release(queue: *const c_void);
+    pub fn dispatch_queue_create(name: *const c_char, attr: *const c_void) -> dispatch_queue_t;
+    pub fn dispatch_release(queue: dispatch_queue_t);
 }
+type dispatch_queue_t = *mut NSObject; // <OS_dispatch_queue>
 
 #[link(name = "CoreVideo", kind = "framework")]
 extern "C" {
@@ -168,19 +169,10 @@ extern_class! {
 }
 
 impl AVCaptureDeviceInput {
-    pub fn from_device(device: &AVCaptureDevice) -> Option<Id<Self, Shared>> {
-        unsafe {
-            // TODO dont know if error handling is correct
-            let error: *mut NSError = msg_send![objc2::class!(NSError), alloc];
-            let input: Option<Id<Self, Shared>> =
-                msg_send_id![Self::class(), deviceInputWithDevice: device, error: error];
-            if input.is_none() {
-                if let Some(error) = Id::<NSError, Shared>::new(error) {
-                    dbg!(error);
-                }
-            }
-            input
-        }
+    pub fn from_device(
+        device: &AVCaptureDevice,
+    ) -> std::result::Result<Id<Self, Shared>, Id<NSError, Shared>> {
+        unsafe { msg_send_id![Self::class(), deviceInputWithDevice: device, error: _] }
     }
 }
 
@@ -244,20 +236,15 @@ impl AVCaptureVideoDataOutput {
             unsafe { msg_send_id![self, availableVideoCVPixelFormatTypes] };
         px_formats.iter().map(|num| num.as_u32()).collect()
     }
+}
 
-    pub fn set_video_settings(&mut self, settings: &NSDictionary<NSString, NSNumber>) {
-        let _: () = unsafe { msg_send![self, setVideoSettings: settings] };
-    }
+extern_methods! {
+    unsafe impl AVCaptureVideoDataOutput {
+        #[method(setVideoSettings:)]
+        fn set_video_settings(&mut self, settings: &NSDictionary<NSString, NSNumber>);
 
-    pub fn set_sample_buffer_delegate(&self, delegate: &NSObject, queue_name: &str) {
-        unsafe {
-            let name = std::ffi::CString::new(queue_name).unwrap();
-            // Calling create, setSampleBufferDelegate and release like I saw in ffmpeg
-            // https://github.com/FFmpeg/FFmpeg/blob/master/libavdevice/avfoundation.m
-            let queue = dispatch_queue_create(name.as_ptr(), null());
-            let _: *const c_void = msg_send![self, setSampleBufferDelegate: delegate, queue: queue];
-            dispatch_release(queue);
-        }
+        #[method(setSampleBufferDelegate:queue:)]
+        fn set_sample_buffer_delegate(&mut self, delegate: &NSObject, queue: dispatch_queue_t);
     }
 }
 
@@ -372,7 +359,15 @@ impl Camera {
 
         self.delegate = Some(MyVideoDataOutputDelegate::new(&self.frame_sender));
         let delegate = self.delegate.as_ref().unwrap();
-        output.set_sample_buffer_delegate(delegate, "video input");
+
+        let name = std::ffi::CString::new("video input").unwrap();
+        // Calling create, setSampleBufferDelegate and release like I saw in ffmpeg
+        // https://github.com/FFmpeg/FFmpeg/blob/master/libavdevice/avfoundation.m
+        let queue = unsafe { dispatch_queue_create(name.as_ptr(), null()) };
+
+        output.set_sample_buffer_delegate(delegate, queue);
+
+        unsafe { dispatch_release(queue) };
 
         assert!(self.capture.can_add_input(&input));
         self.capture.add_input(&input);
