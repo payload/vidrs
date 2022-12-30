@@ -1,9 +1,9 @@
 [package]
+authors = ["Gilbert Röhrbein"]
 edition = "2021"
+license = "Apache-2.0 OR MIT"
 name = "vidrs"
 version = "0.1.0"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.68"
