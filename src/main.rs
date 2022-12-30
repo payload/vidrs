@@ -127,24 +127,29 @@ async fn encode_frames(
     while let Some(frame) = frames.recv().await {
         let format = frame.format();
         encoder = reconfigure_encoder(encoder, &format);
-
-        let Some(encoder) = encoder.as_mut() else { panic!("no enocder"); };
-        let start_time = start_time.get_or_insert_with(|| Instant::now());
-
+        let Some(encoder) = encoder.as_mut() else { panic!("no encoder"); };
+        let start_time = start_time.get_or_insert_with(Instant::now);
         let pts = start_time.elapsed().as_millis() as _;
         let data = frame.pixels().data;
+        let force_keyframe = picture_loss_indicator.load(Ordering::Relaxed);
 
-        let frames: Vec<_> = encoder
-            .encode(pts, data, picture_loss_indicator.load(Ordering::Relaxed))
-            .expect("encoded packets")
-            .map(|frame| {
-                if frame.key {
+        let mut encoded_data = encoder
+            .encode(pts, data, force_keyframe)
+            .expect("encoded data");
+
+        // Copy each frame so we can asynchronously send them one after the other without risking getting an invalidated buffer.
+        // TODO This copy can be skipped when we check that the packets sender is not full.
+        // TODO This copy can be skipped when we control the data buffer by using vpx_codec_set_cx_data_buf.
+        let frames: Vec<_> = encoded_data
+            .frames()
+            .inspect(|frame| {
+                if frame.keyframe() {
                     log::debug!("Encoded key frame: {:?}", format)
                 }
-                EncodedFrame {
-                    bytes: bytes::Bytes::copy_from_slice(frame.data),
-                    keyframe: frame.key,
-                }
+            })
+            .map(|frame| EncodedFrame {
+                bytes: bytes::Bytes::copy_from_slice(frame.data),
+                keyframe: frame.keyframe(),
             })
             .collect();
 
@@ -158,27 +163,24 @@ async fn encode_frames(
 }
 
 fn reconfigure_encoder(
-    encoder: Option<codec::Encoder>,
+    encoder: Option<codec::Vp8Encoder>,
     format: &camera::SampleFormat,
-) -> Option<codec::Encoder> {
+) -> Option<codec::Vp8Encoder> {
+    let config = codec::Vp8Config::new(format.width as u32, format.height as u32, [1, 1000], 5000)
+        .expect("config");
+
     if let Some(encoder) = encoder {
-        if encoder.width == format.width as usize && encoder.height == format.height as usize {
+        if encoder.config() == &config {
             return Some(encoder);
         }
     }
 
-    let config = codec::Config {
-        width: format.width as u32,
-        height: format.height as u32,
-        codec: codec::VideoCodecId::VP8,
-        timebase: [1, 1000],
-        bitrate: 5000,
-    };
-    Some(codec::Encoder::new(config).expect("encoder"))
+    Some(codec::Vp8Encoder::new(&config).expect("encoder"))
 }
 
 fn init_logging() {
     env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Trace)
+        .filter(None, log::LevelFilter::Error)
+        .parse_default_env()
         .init();
 }

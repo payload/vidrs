@@ -124,7 +124,7 @@ pub async fn webrtc_testapp(
             ..Default::default()
         };
         if frame.keyframe {
-            log::debug!("Output track, write keframe.");
+            log::debug!("Output track, write keyframe. {}", sample.data.len());
         }
         if let Err(err) = output_track.write_sample(&sample).await {
             log::warn!("Output track, write sample failed: {}", err);
@@ -139,7 +139,7 @@ pub async fn webrtc_testapp(
     Ok(())
 }
 
-const INDEX_HTML: &'static str = include_str!("./index.html");
+const INDEX_HTML: &str = include_str!("./index.html");
 
 #[derive(thiserror::Error, Debug)]
 pub enum HttpTestappError {
@@ -168,21 +168,20 @@ async fn remote_handler(
 
             let (answer_tx, mut answer_rx) = mpsc::channel(1);
 
+            log::debug!("offer in");
             let _ = exchange_tx.send((sdp, answer_tx)).await;
-            println!("exchange sent");
 
             if let Some(answer) = answer_rx.recv().await {
-                println!("answer received");
                 let answer_str =
                     serde_json::to_string(&answer).map_err(HttpTestappError::AnswerSdp)?;
                 let mut response = Response::new(answer_str.into());
                 *response.status_mut() = StatusCode::OK;
-                println!("answer response");
+                log::debug!("answer out");
                 Ok(response)
             } else {
                 let mut response = Response::new(Body::empty());
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                println!("answer error");
+                log::error!("answer error");
                 Ok(response)
             }
         }
@@ -271,10 +270,9 @@ async fn process_rtcp(rtp_sender: Arc<RTCRtpSender>, picture_loss_indicator: Arc
         for packet in packets {
             if packet.header().packet_type == PacketType::PayloadSpecificFeedback
                 && packet.header().length == FORMAT_PLI as u16
+                && !picture_loss_indicator.swap(true, Ordering::Relaxed)
             {
-                if picture_loss_indicator.swap(true, Ordering::Relaxed) == false {
-                    log::debug!("Picture loss indicator set.");
-                }
+                log::debug!("Picture loss indicator set.");
             }
         }
     }
