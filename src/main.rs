@@ -11,13 +11,9 @@ mod camera;
 mod codec;
 mod webrtc;
 
-const DEBUG: bool = true;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if DEBUG {
-        init_logging()
-    }
+    init_logging();
 
     /*
 
