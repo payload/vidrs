@@ -55,18 +55,13 @@ impl Vp8Encoder {
         })
     }
 
+    /// Only YV12, I420 and NV12 images are supported.
     pub fn encode(
         &mut self,
         pts: i64,
-        data: &[u8],
+        image: vpx_image,
         force_keyframe: bool,
     ) -> Result<Vp8EncoderData> {
-        let image = create_image_wrap(
-            self.config.width,
-            self.config.height,
-            data,
-            ImageFormat::I420,
-        )?;
         let flags = if force_keyframe {
             Vp8Flags::FORCE_KF
         } else {
@@ -79,6 +74,10 @@ impl Vp8Encoder {
 
     pub fn config(&self) -> &Vp8Config {
         &self.config
+    }
+
+    pub fn wrap_image(&self, data: &[u8], format: ImageFormat) -> Result<vpx_image> {
+        create_image_wrap(self.config.width, self.config.height, data, format)
     }
 }
 
@@ -175,6 +174,26 @@ pub enum Error {
     // TODO we can be more specific than this
     #[error("")]
     Bad,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(unused)]
+pub enum ImageFormat {
+    /// Same as f420 on Mac
+    I420,
+    YV12,
+    /// Same as 420v on Mac
+    NV12,
+}
+
+impl ImageFormat {
+    fn vpx_img_fmt(&self) -> vpx_img_fmt {
+        match self {
+            ImageFormat::I420 => vpx_img_fmt::VPX_IMG_FMT_I420,
+            ImageFormat::YV12 => vpx_img_fmt::VPX_IMG_FMT_YV12,
+            ImageFormat::NV12 => vpx_img_fmt::VPX_IMG_FMT_NV12,
+        }
+    }
 }
 
 // TODO test and consider using libvpx error strings
@@ -301,19 +320,5 @@ bitflags::bitflags! {
         const NO_REF_LAST = VP8_EFLAG_NO_REF_LAST;
         const NO_REF_GF = VP8_EFLAG_NO_REF_GF;
         // TODO see vp8cx.h to add more
-    }
-}
-
-#[derive(PartialEq, Eq, Debug)]
-enum ImageFormat {
-    /// Corresponds to f420 on Mac
-    I420,
-}
-
-impl ImageFormat {
-    fn vpx_img_fmt(&self) -> vpx_img_fmt {
-        match self {
-            ImageFormat::I420 => vpx_img_fmt::VPX_IMG_FMT_I420,
-        }
     }
 }

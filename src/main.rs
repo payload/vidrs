@@ -78,18 +78,25 @@ async fn run_camera(
     exit: broadcast::Receiver<()>,
     frames_tx: mpsc::Sender<camera::Frame>,
 ) {
-    let mut cam = camera::create_camera();
+    let mut cam = camera::Camera::default().unwrap();
+    let format = cam.formats().first().cloned().unwrap();
+    cam.set_preferred_format(Some(format));
 
     cam.start().unwrap();
     let frame = cam.frames().next().unwrap();
     let format = frame.format();
-    log::debug!("start_camera: first frame format: {:?}", format);
+    log::debug!("run_camera: Started receiving camera frames. {:?}", format);
 
     while exit.is_empty() {
-        let frame = cam.frames().next().unwrap();
-        let frame_tx = frames_tx.clone();
-        if frame_tx.send(frame).await.is_err() {
-            log::debug!("No camera frame receiver. End.");
+        let frame = cam.frames().next();
+
+        if let Some(frame) = frame {
+            if frames_tx.clone().send(frame).await.is_err() {
+                log::debug!("run_camera: No camera frame receiver. End.");
+                break;
+            }
+        } else {
+            log::debug!("run_camera: No camera frame sender. End.");
             break;
         }
     }
@@ -126,12 +133,16 @@ async fn encode_frames(
         let Some(encoder) = encoder.as_mut() else { panic!("no encoder"); };
         let start_time = start_time.get_or_insert_with(Instant::now);
         let pts = start_time.elapsed().as_millis() as _;
-        let data = frame.pixels().data;
         let force_keyframe = picture_loss_indicator.load(Ordering::Relaxed);
 
-        let mut encoded_data = encoder
-            .encode(pts, data, force_keyframe)
-            .expect("encoded data");
+        let mut encoded_data = {
+            let image = encoder
+                .wrap_image(frame.pixels().data, codec::ImageFormat::NV12)
+                .expect("wrap image");
+            encoder
+                .encode(pts, image, force_keyframe)
+                .expect("encoded data")
+        };
 
         // Copy each frame so we can asynchronously send them one after the other without risking getting an invalidated buffer.
         // TODO This copy can be skipped when we check that the packets sender is not full.
@@ -140,7 +151,7 @@ async fn encode_frames(
             .frames()
             .inspect(|frame| {
                 if frame.keyframe() {
-                    log::debug!("Encoded key frame: {:?}", format)
+                    log::debug!("encode_frames: Encoded key frame: {:?}", format)
                 }
             })
             .map(|frame| EncodedFrame {
@@ -151,7 +162,10 @@ async fn encode_frames(
 
         for frame in frames {
             if let Err(err) = packets.send(frame).await {
-                log::debug!("No encoded frame receiver. End encoding frames. {}", err);
+                log::debug!(
+                    "encode_frames: No encoded frame receiver. End encoding frames. {}",
+                    err
+                );
                 return;
             }
         }
