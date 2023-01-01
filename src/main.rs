@@ -5,7 +5,8 @@ use std::{
     },
     time::*,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
+use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 mod camera;
 mod codec;
@@ -32,17 +33,23 @@ async fn main() -> anyhow::Result<()> {
      */
 
     let (exit_tx, exit) = broadcast::channel(1);
-    let (frames_tx, frames) = mpsc::channel(1);
+
+    let (camera_frame_tx, camera_frame) = watch::channel(None);
+
     let (encoded_frames_tx, encoded_frames) = mpsc::channel(3);
     let picture_loss_indicator = Arc::new(AtomicBool::new(false));
     let (exchange_tx, exchange_rx) = mpsc::channel(1);
 
     let _ = tokio::spawn(exit_on_ctrl_c(exit_tx.clone()));
 
-    let run_camera_task = tokio::spawn(run_camera(exit_tx.clone(), exit.resubscribe(), frames_tx));
+    let run_camera_task = tokio::spawn(run_camera(
+        exit_tx.clone(),
+        exit.resubscribe(),
+        camera_frame_tx,
+    ));
 
     let encode_frames_task = tokio::spawn(encode_frames(
-        frames,
+        camera_frame,
         encoded_frames_tx,
         picture_loss_indicator.clone(),
     ));
@@ -76,27 +83,41 @@ async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
 async fn run_camera(
     exit_tx: broadcast::Sender<()>,
     exit: broadcast::Receiver<()>,
-    frames_tx: mpsc::Sender<camera::Frame>,
+    frames_tx: camera::SenderSharedFrame,
 ) {
     let mut cam = camera::Camera::default().unwrap();
     let format = cam.formats().first().cloned().unwrap();
     cam.set_preferred_format(Some(format));
 
     cam.start().unwrap();
-    let frame = cam.frames().next().unwrap();
-    let format = frame.format();
-    log::debug!("run_camera: Started receiving camera frames. {:?}", format);
+    let mut frames = cam.frames();
+    let mut first_frame = true;
 
-    while exit.is_empty() {
-        let frame = cam.frames().next();
+    loop {
+        if !exit.is_empty() {
+            break;
+        }
 
-        if let Some(frame) = frame {
-            if frames_tx.clone().send(frame).await.is_err() {
-                log::debug!("run_camera: No camera frame receiver. End.");
-                break;
+        if let Some(frame) = frames.next().await {
+            let Some(frame) = frame else { continue };
+
+            if first_frame {
+                first_frame = false;
+                log::debug!(
+                    "run_camera: Started receiving camera frames. {:?}",
+                    frame.format()
+                );
+            }
+
+            match frames_tx.send(Some(frame)) {
+                Ok(_) => log::trace!("run_camera: send frame"),
+                Err(_) => {
+                    log::debug!("run_camera: No camera frame receiver. End.");
+                    break;
+                }
             }
         } else {
-            log::debug!("run_camera: No camera frame sender. End.");
+            log::debug!("run_camera: Camera frames ended. End.");
             break;
         }
     }
@@ -120,14 +141,18 @@ impl std::fmt::Debug for EncodedFrame {
 }
 
 async fn encode_frames(
-    mut frames: mpsc::Receiver<camera::Frame>,
+    frame: camera::ReceiverSharedFrame,
     packets: mpsc::Sender<EncodedFrame>,
     picture_loss_indicator: Arc<AtomicBool>,
 ) {
     let mut start_time = None;
     let mut encoder = None;
+    let mut frames = WatchStream::new(frame);
 
-    while let Some(frame) = frames.recv().await {
+    while let Some(frame) = frames.next().await {
+        let Some(frame) = frame else { continue };
+        log::trace!("encode_frames: recv frame");
+
         let format = frame.format();
         encoder = reconfigure_encoder(encoder, &format);
         let Some(encoder) = encoder.as_mut() else { panic!("no encoder"); };
@@ -161,15 +186,21 @@ async fn encode_frames(
             .collect();
 
         for frame in frames {
-            if let Err(err) = packets.send(frame).await {
-                log::debug!(
-                    "encode_frames: No encoded frame receiver. End encoding frames. {}",
-                    err
-                );
-                return;
+            log::trace!("encode_frames: sending frame");
+            match packets.send(frame).await {
+                Ok(_) => log::trace!("encode_frames: sent frame"),
+                Err(err) => {
+                    log::debug!(
+                        "encode_frames: No encoded frame receiver. End encoding frames. {}",
+                        err
+                    );
+                    return;
+                }
             }
         }
     }
+
+    log::debug!("encode_frames: End.");
 }
 
 fn reconfigure_encoder(

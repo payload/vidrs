@@ -1,5 +1,5 @@
 #![allow(unused)]
-use std::os::raw::c_char;
+use std::{boxed, os::raw::c_char, sync::Arc};
 
 pub use std::ffi::c_void;
 pub use std::ptr::null;
@@ -95,6 +95,8 @@ use icrate::{
     objc2::{declare_class, extern_class, rc::*, runtime::*, *},
     Foundation::*,
 };
+use tokio::sync::watch;
+use tokio_stream::wrappers::WatchStream;
 
 fn foo() {
     let x: NSString;
@@ -254,6 +256,9 @@ extern_methods! {
 
 type CallbackPtr = *const c_void;
 
+pub type SenderSharedFrame = tokio::sync::watch::Sender<Option<Arc<Frame>>>;
+pub type ReceiverSharedFrame = tokio::sync::watch::Receiver<Option<Arc<Frame>>>;
+
 declare_class!(
     pub struct MyVideoDataOutputDelegate {
         pub callback: CallbackPtr,
@@ -285,25 +290,50 @@ declare_class!(
             sample: *const c_void,
             _connection: *const c_void,
         ) {
-            let callback: *const c_void = *self.callback;
-            let delegate = unsafe { &*callback.cast::<Box<dyn VideoDataOutputDelegate>>() };
-            delegate.frame(sample as *const CMSampleBuffer);
+            let void_ptr: *const c_void = *self.callback;
+            let sender_ptr = unsafe { void_ptr.cast::<SenderSharedFrame>() };
+            if let Some(sender_ref) = unsafe { sender_ptr.as_ref() } {
+                if sample.is_null() {
+                    log::warn!("captureOutput:didOutputSampleBuffer: sample is null");
+                    sender_ref.send(None);
+                } else {
+                    sender_ref.send(Some(Arc::new(Frame::new(sample as _))));
+                }
+            } else {
+                log::error!("captureOutput:didOutputSampleBuffer: sender_ptr is null");
+                // This means the sender_ptr was not initialized well.
+            }
         }
     }
 );
 
 impl MyVideoDataOutputDelegate {
     #[allow(clippy::borrowed_box)]
-    pub fn new(callback: &Box<dyn VideoDataOutputDelegate>) -> Id<Self, Owned> {
-        let ptr = callback as *const _ as *const c_void;
+    pub fn new(sender_ptr: *const SenderSharedFrame) -> Id<Self, Owned> {
+        let void_ptr = sender_ptr as *const c_void;
         let cls = Self::class();
-        unsafe { msg_send_id![msg_send_id![cls, alloc], initWithCallback: ptr] }
+        unsafe { msg_send_id![msg_send_id![cls, alloc], initWithCallback: void_ptr] }
     }
 }
 
 pub trait VideoDataOutputDelegate {
     fn frame(&self, sbuf: *const CMSampleBuffer);
 }
+
+impl<T: Fn(Option<Arc<Frame>>)> VideoDataOutputDelegate for T {
+    fn frame(&self, sbuf: *const CMSampleBuffer) {
+        log::trace!("frame for Fn");
+        self(Some(Arc::new(Frame::new(sbuf))));
+    }
+}
+
+impl VideoDataOutputDelegate for tokio::sync::watch::Sender<Option<Frame>> {
+    fn frame(&self, sbuf: *const CMSampleBuffer) {
+        log::trace!("frame for watch::Sender");
+        let _ = self.send(Some(Frame::new(sbuf)));
+    }
+}
+
 /* */
 
 use std::{io::Result, sync::mpsc};
@@ -313,9 +343,9 @@ pub struct Camera {
     name: String,
     device: Id<AVCaptureDevice, Shared>,
     capture: Id<AVCaptureSession, Shared>,
-    frame_sender: Box<dyn VideoDataOutputDelegate>,
-    frame_receiver: mpsc::Receiver<Frame>,
-    delegate: Option<Id<MyVideoDataOutputDelegate, Owned>>,
+    sender: Arc<watch::Sender<Option<Arc<Frame>>>>,
+    receiver: watch::Receiver<Option<Arc<Frame>>>,
+    delegate: Id<MyVideoDataOutputDelegate, Owned>,
     prefererred_format: Option<DeviceFormat>,
 }
 
@@ -325,17 +355,16 @@ impl Camera {
     pub fn default() -> Result<Self> {
         let device = AVCaptureDevice::default_video().unwrap();
         let name = device.localized_name().to_string();
-        let (frame_sender, frame_receiver) = mpsc::sync_channel(1);
-
+        let (sender, receiver) = watch::channel(None);
+        let sender = Arc::new(sender);
+        let sender_ptr = Arc::as_ptr(&sender);
         Ok(Self {
             name,
             device,
+            sender,
+            receiver,
             capture: AVCaptureSession::new(),
-            frame_sender: Box::new(FrameSender {
-                sender: frame_sender,
-            }),
-            frame_receiver,
-            delegate: None,
+            delegate: MyVideoDataOutputDelegate::new(unsafe { sender_ptr.as_ref() }.unwrap()),
             prefererred_format: None,
         })
     }
@@ -363,15 +392,12 @@ impl Camera {
         let video_settings = self.video_settings(&Config {});
         output.set_video_settings(&video_settings);
 
-        self.delegate = Some(MyVideoDataOutputDelegate::new(&self.frame_sender));
-        let delegate = self.delegate.as_ref().unwrap();
-
         let name = std::ffi::CString::new("video input").unwrap();
         // Calling create, setSampleBufferDelegate and release like I saw in ffmpeg
         // https://github.com/FFmpeg/FFmpeg/blob/master/libavdevice/avfoundation.m
         let queue = unsafe { dispatch_queue_create(name.as_ptr(), null()) };
 
-        output.set_sample_buffer_delegate(delegate, queue);
+        output.set_sample_buffer_delegate(&self.delegate, queue);
 
         unsafe { dispatch_release(queue) };
 
@@ -385,12 +411,12 @@ impl Camera {
         Ok(())
     }
 
-    pub fn stop(&mut self) {
-        self.capture.stop_running();
+    pub fn frames(&self) -> WatchStream<Option<Arc<Frame>>> {
+        WatchStream::new(self.receiver.clone())
     }
 
-    pub fn frames(&self) -> std::sync::mpsc::Iter<Frame> {
-        self.frame_receiver.iter()
+    pub fn stop(&mut self) {
+        self.capture.stop_running();
     }
 
     fn video_settings(
@@ -465,7 +491,7 @@ impl Frame {
 
     fn retain(ptr: *const CMSampleBuffer) -> &'static CMSampleBuffer {
         let ptr = unsafe { CFRetain(ptr as *const _) as *const CMSampleBuffer };
-        unsafe { ptr.as_ref().unwrap() }
+        unsafe { ptr.as_ref() }.unwrap()
     }
 
     pub fn format(&self) -> SampleFormat {
@@ -483,7 +509,7 @@ impl Frame {
 
 impl Drop for Frame {
     fn drop(&mut self) {
-        let ptr = self.raw_sample_buffer() as *const _;
+        let ptr = self.sbuf as *const _ as *const _;
         unsafe { CFRelease(ptr) };
     }
 }

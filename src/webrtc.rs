@@ -126,6 +126,7 @@ pub async fn webrtc_testapp(
         if frame.keyframe {
             log::debug!("Output track, write keyframe. {}", sample.data.len());
         }
+        log::trace!("Before write video sample {}", sample.data.len());
         if let Err(err) = output_track.write_sample(&sample).await {
             log::warn!("Output track, write sample failed: {}", err);
         }

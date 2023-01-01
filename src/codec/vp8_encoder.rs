@@ -4,13 +4,12 @@ use std::{ptr, slice};
 use vpx_sys::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Vp8Config {
     pub width: u32,
     pub height: u32,
     pub timebase: [i32; 2],
     pub bitrate: u32,
-
-    _private: (),
 }
 
 impl Vp8Config {
@@ -26,7 +25,6 @@ impl Vp8Config {
             height,
             timebase,
             bitrate,
-            _private: (),
         })
     }
 }
@@ -96,7 +94,7 @@ impl<'enc> Vp8EncoderData<'enc> {
         }
     }
 
-    pub fn frames<'now>(&'now mut self) -> impl Iterator<Item = Vp8Frame<'now>> {
+    pub fn frames(&mut self) -> impl Iterator<Item = Vp8Frame> {
         std::iter::from_fn(|| loop {
             let Some(packet) = next_packet(&mut self.encoder.context, &mut self.iterator) else {
                 return None
