@@ -49,10 +49,12 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let encode_frames_task = tokio::spawn(encode_frames(
-        camera_frame,
+        camera_frame.clone(),
         encoded_frames_tx,
         picture_loss_indicator.clone(),
     ));
+
+    tokio::spawn(write_frame(camera_frame.clone()));
 
     let http_testapp_task =
         tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
@@ -70,6 +72,29 @@ async fn main() -> anyhow::Result<()> {
         webrtc_testapp_task
     );
     Ok(())
+}
+
+async fn write_frame(mut frame: camera::ReceiverSharedFrame) {
+    for _ in 0..10 {
+        let _ = frame.changed().await;
+    }
+
+    let (path, data) = {
+        let frame_borrow = frame.borrow();
+        let Some(frame) = frame_borrow.as_ref() else { return };
+
+        let format = frame.format();
+        let path = format!(
+            "camera_frame.{}.{}.{}",
+            format.pixel_format.as_str(),
+            format.width,
+            format.height
+        );
+        let data = frame.pixels().data.to_vec();
+        (path, data)
+    };
+
+    let _ = tokio::fs::write(path, &data).await;
 }
 
 async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
