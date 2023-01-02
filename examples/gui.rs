@@ -145,21 +145,22 @@ mod shader {
     uniform sampler2D tex_uv;
 
     void main() {
-        lowp float r, g, b, y, u, v;
+        lowp vec2 coord = vec2(xy.x, 1.0 - xy.y);
 
-        y = texture2D(tex_y, vec2(xy.x, 1.0 - xy.y)).r;
-        lowp vec4 uv = texture2D(tex_uv, vec2(xy.x, 1.0 - xy.y));
-        u = uv.r - 0.5;
-        v = uv.g - 0.5;
+        lowp vec3 yuv, rgb;
+        lowp vec3 yuv2r = vec3(1.164, 0.0, 1.596);
+        lowp vec3 yuv2g = vec3(1.164, -0.391, -0.813);
+        lowp vec3 yuv2b = vec3(1.164, 2.018, 0.0);
 
-        r = y + 1.13983*v;
-        g = y - 0.39465*u - 0.58060*v;
-        b = y + 2.03211*u;
+        yuv.x = texture2D(tex_y, coord).r - 0.0625;
+        yuv.y = texture2D(tex_uv, coord).r - 0.5;
+        yuv.z = texture2D(tex_uv, coord).g - 0.5;
 
-        // gl_FragColor = vec4(y, y, y, 1.0);
-        // gl_FragColor = vec4(u, u, u, 1.0);
-        // gl_FragColor = vec4(v, v, v, 1.0);
-        gl_FragColor = vec4(r, g, b, 1.0);
+        rgb.x = dot(yuv, yuv2r);
+        rgb.y = dot(yuv, yuv2g);
+        rgb.z = dot(yuv, yuv2b);
+
+        gl_FragColor = vec4(rgb, 1.0);
     }
     "#;
 
