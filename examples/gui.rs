@@ -64,7 +64,7 @@ impl Stage {
             ctx,
             &yuv[y_len..(y_len + uv_len)],
             TextureParams {
-                format: TextureFormat::Depth,
+                format: TextureFormat::LuminanceAlpha,
                 wrap: TextureWrap::Clamp,
                 filter: FilterMode::Nearest,
                 width: (w / 2) as _,
@@ -152,9 +152,9 @@ mod shader {
         lowp vec3 yuv2g = vec3(1.164, -0.391, -0.813);
         lowp vec3 yuv2b = vec3(1.164, 2.018, 0.0);
 
-        yuv.x = texture2D(tex_y, coord).r - 0.0625;
+        yuv.x = texture2D(tex_y, coord).a - 0.0625;
         yuv.y = texture2D(tex_uv, coord).r - 0.5;
-        yuv.z = texture2D(tex_uv, coord).g - 0.5;
+        yuv.z = texture2D(tex_uv, coord).a - 0.5;
 
         rgb.x = dot(yuv, yuv2r);
         rgb.y = dot(yuv, yuv2g);
