@@ -10,6 +10,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 mod camera;
 mod codec;
+mod gui;
 mod webrtc;
 
 #[tokio::main]
@@ -65,12 +66,18 @@ async fn main() -> anyhow::Result<()> {
         picture_loss_indicator.clone(),
     ));
 
+    // let gui_thread = std::thread::spawn(|| {
+        gui::run_gui();
+    // });
+
     let _ = tokio::join!(
         run_camera_task,
         encode_frames_task,
         http_testapp_task,
         webrtc_testapp_task
     );
+
+    // gui_thread.join().expect("gui thread");
     Ok(())
 }
 

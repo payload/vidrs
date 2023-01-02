@@ -20,3 +20,4 @@ On a MacOS system with an attached camera you can call `cargo run` and go to the
 * use some GUI to show video too, like [egui](https://github.com/emilk/egui), [iced](https://github.com/iced-rs/iced) or [tauri](https://github.com/tauri-apps/tauri)
 * use [algesten/str0m](https://github.com/algesten/str0m) for handling WebRTC
 * spin off some crates
+* some dependencies use `objc` instead of `objc2`, so MacOS bindings could be implemented in different binding ecosystems
