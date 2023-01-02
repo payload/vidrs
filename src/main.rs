@@ -111,7 +111,8 @@ async fn run_camera(
     frames_tx: camera::SenderSharedFrame,
 ) {
     let mut cam = camera::Camera::default().unwrap();
-    let format = cam.formats().first().cloned().unwrap();
+    // searching for the biggest compatible NV21 video range format, on Mac this is 420v
+    let format = cam.formats().into_iter().filter(|f| &f.pixel_format == "420v").max_by_key(|f| f.height).expect("420v format");
     cam.set_preferred_format(Some(format));
 
     cam.start().unwrap();
