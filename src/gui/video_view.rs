@@ -1,19 +1,24 @@
 use miniquad::*;
 
+/// Takes NV21 video range frames and draws them into a RGBA texture.
 pub struct VideoView {
     pipeline: Pipeline,
     quad: Bindings,
     pass: RenderPass,
     nv21: NV21Textures,
+    render_texture: Texture,
 }
 
 impl VideoView {
     pub fn new(ctx: &mut Context) -> Self {
+        let render_texture = Texture::new_render_texture(ctx, TextureParams::default());
+
         Self {
             pipeline: new_offscreen_quad_pipeline(ctx),
-            pass: new_render_pass(ctx),
+            pass: RenderPass::new(ctx, render_texture, None),
             quad: new_quad(ctx),
             nv21: NV21Textures::new(ctx, &[], 0, 0),
+            render_texture,
         }
     }
 
@@ -27,6 +32,11 @@ impl VideoView {
 
     pub fn update(&mut self, ctx: &mut Context, yuv: &[u8], width: u32, height: u32) {
         self.nv21.update(ctx, yuv, width, height);
+
+        if self.render_texture.width != width || self.render_texture.height != height {
+            self.render_texture.resize(ctx, width, height, None);
+            self.pass = RenderPass::new(ctx, self.render_texture, None);
+        }
     }
 
     pub fn draw(&mut self, ctx: &mut Context) -> Texture {
@@ -88,29 +98,6 @@ fn new_quad(ctx: &mut Context) -> Bindings {
     }
 }
 
-fn new_render_pass(ctx: &mut Context) -> RenderPass {
-    let color_img = Texture::new_render_texture(
-        ctx,
-        TextureParams {
-            width: 256,
-            height: 256,
-            format: TextureFormat::RGBA8,
-            ..Default::default()
-        },
-    );
-    let depth_img = Texture::new_render_texture(
-        ctx,
-        TextureParams {
-            width: 256,
-            height: 256,
-            format: TextureFormat::Depth,
-            ..Default::default()
-        },
-    );
-
-    RenderPass::new(ctx, color_img, depth_img)
-}
-
 mod offscreen_shader {
     use miniquad::*;
 
@@ -133,16 +120,14 @@ mod offscreen_shader {
     uniform sampler2D tex_uv;
 
     void main() {
-        lowp vec2 coord = frag_uv;
-
         lowp vec3 yuv, rgb;
         lowp vec3 yuv2r = vec3(1.164, 0.0, 1.596);
         lowp vec3 yuv2g = vec3(1.164, -0.391, -0.813);
         lowp vec3 yuv2b = vec3(1.164, 2.018, 0.0);
 
-        yuv.x = texture2D(tex_y, coord).a - 0.0625;
-        yuv.y = texture2D(tex_uv, coord).r - 0.5;
-        yuv.z = texture2D(tex_uv, coord).a - 0.5;
+        yuv.x = texture2D(tex_y, frag_uv).a - 0.0625;
+        yuv.y = texture2D(tex_uv, frag_uv).r - 0.5;
+        yuv.z = texture2D(tex_uv, frag_uv).a - 0.5;
 
         rgb.x = dot(yuv, yuv2r);
         rgb.y = dot(yuv, yuv2g);

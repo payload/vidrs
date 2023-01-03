@@ -3,13 +3,11 @@ use miniquad::*;
 
 use crate::camera::ReceiverSharedFrame;
 
-mod cube;
 mod video_view;
 
 struct Stage {
     egui_mq: egui_mq::EguiMq,
     video_view: video_view::VideoView,
-    cube: cube::Cube,
     camera_frame: ReceiverSharedFrame,
 }
 
@@ -24,7 +22,6 @@ impl Stage {
         Self {
             egui_mq: egui_mq::EguiMq::new(ctx),
             video_view: video_view::VideoView::new(ctx),
-            cube: cube::Cube::new(ctx),
             camera_frame,
         }
     }
@@ -42,17 +39,12 @@ impl Stage {
         let video_texture_id = self.video_view.draw(ctx).gl_internal_id() as _;
         let video_texture_id = egui::TextureId::User(video_texture_id);
 
-        let cube_texture_id = self.cube.draw(ctx).gl_internal_id() as _;
-        let cube_texture_id = egui::TextureId::User(cube_texture_id);
-
         self.egui_mq.run(ctx, |_mq_ctx, egui_ctx| {
             egui::Window::new("vidrs").show(egui_ctx, |ui| {
-                ui.image(cube_texture_id, egui::Vec2::new(256.0, 256.0));
-
                 let width = self.video_view.width() as f32;
                 let height = self.video_view.height() as f32;
                 let ratio = width / height;
-                let height = 256.0;
+                let height = height / 2.0;
                 let width = ratio * height;
                 ui.image(video_texture_id, egui::Vec2::new(width, height));
 
