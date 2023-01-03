@@ -4,8 +4,6 @@ pub struct VideoView {
     pipeline: Pipeline,
     quad: Bindings,
     pass: RenderPass,
-    rx: f32,
-    ry: f32,
     nv21: NV21Textures,
 }
 
@@ -15,8 +13,6 @@ impl VideoView {
             pipeline: new_offscreen_quad_pipeline(ctx),
             pass: new_render_pass(ctx),
             quad: new_quad(ctx),
-            rx: 0.0,
-            ry: 0.0,
             nv21: NV21Textures::new(ctx, &[], 0, 0),
         }
     }
@@ -34,30 +30,14 @@ impl VideoView {
     }
 
     pub fn draw(&mut self, ctx: &mut Context) -> Texture {
-        use glam::*;
-
         if self.quad.images.is_empty() {
             self.quad.images.push(self.nv21.texture_y);
             self.quad.images.push(self.nv21.texture_uv);
         }
 
-        let (width, height) = ctx.screen_size();
-        let proj = Mat4::perspective_rh_gl(60.0f32.to_radians(), width / height, 0.01, 10.0);
-        let view = Mat4::look_at_rh(
-            vec3(0.0, 1.5, 3.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 1.0, 0.0),
-        );
-        let view_proj = proj * view;
-        // self.rx += 0.01;
-        // self.ry += 0.03;
-        let mvp = view_proj * Mat4::from_rotation_x(self.rx) * Mat4::from_rotation_y(self.ry);
-        let uniforms = offscreen_shader::Uniforms { mvp };
-
         ctx.begin_pass(self.pass, PassAction::clear_color(0.0, 1.0, 1.0, 1.));
         ctx.apply_pipeline(&self.pipeline);
         ctx.apply_bindings(&self.quad);
-        ctx.apply_uniforms(&uniforms);
         ctx.draw(0, 6, 1); // the number of indices?
         ctx.end_render_pass();
         self.pass.texture(ctx)
@@ -67,11 +47,10 @@ impl VideoView {
 fn new_offscreen_quad_pipeline(ctx: &mut Context) -> Pipeline {
     let vertex_attributes = [
         VertexAttribute::new("pos", VertexFormat::Float3),
-        VertexAttribute::new("color", VertexFormat::Float4),
         VertexAttribute::new("uv", VertexFormat::Float2),
     ];
     let buffer_layout = [BufferLayout {
-        stride: 36,
+        stride: 20,
         ..Default::default()
     }];
     let shader = offscreen_shader::new(ctx);
@@ -91,51 +70,17 @@ fn new_offscreen_quad_pipeline(ctx: &mut Context) -> Pipeline {
 fn new_quad(ctx: &mut Context) -> Bindings {
     #[rustfmt::skip]
     let vertices: &[f32] = &[
-        /* pos               color                   uvs */
-        -1.0, -1.0, -1.0,    1.0, 0.5, 0.5, 1.0,     0.0, 0.0,
-         1.0, -1.0, -1.0,    1.0, 0.5, 0.5, 1.0,     1.0, 0.0,
-         1.0,  1.0, -1.0,    1.0, 0.5, 0.5, 1.0,     1.0, 1.0,
-        -1.0,  1.0, -1.0,    1.0, 0.5, 0.5, 1.0,     0.0, 1.0,
-
-        -1.0, -1.0,  1.0,    0.5, 1.0, 0.5, 1.0,     0.0, 0.0,
-         1.0, -1.0,  1.0,    0.5, 1.0, 0.5, 1.0,     1.0, 0.0,
-         1.0,  1.0,  1.0,    0.5, 1.0, 0.5, 1.0,     1.0, 1.0,
-        -1.0,  1.0,  1.0,    0.5, 1.0, 0.5, 1.0,     0.0, 1.0,
-
-        -1.0, -1.0, -1.0,    0.5, 0.5, 1.0, 1.0,     0.0, 0.0,
-        -1.0,  1.0, -1.0,    0.5, 0.5, 1.0, 1.0,     1.0, 0.0,
-        -1.0,  1.0,  1.0,    0.5, 0.5, 1.0, 1.0,     1.0, 1.0,
-        -1.0, -1.0,  1.0,    0.5, 0.5, 1.0, 1.0,     0.0, 1.0,
-
-         1.0, -1.0, -1.0,    1.0, 0.5, 0.0, 1.0,     0.0, 0.0,
-         1.0,  1.0, -1.0,    1.0, 0.5, 0.0, 1.0,     1.0, 0.0,
-         1.0,  1.0,  1.0,    1.0, 0.5, 0.0, 1.0,     1.0, 1.0,
-         1.0, -1.0,  1.0,    1.0, 0.5, 0.0, 1.0,     0.0, 1.0,
-
-        -1.0, -1.0, -1.0,    0.0, 0.5, 1.0, 1.0,     0.0, 0.0,
-        -1.0, -1.0,  1.0,    0.0, 0.5, 1.0, 1.0,     1.0, 0.0,
-         1.0, -1.0,  1.0,    0.0, 0.5, 1.0, 1.0,     1.0, 1.0,
-         1.0, -1.0, -1.0,    0.0, 0.5, 1.0, 1.0,     0.0, 1.0,
-
-        -1.0,  1.0, -1.0,    1.0, 0.0, 0.5, 1.0,     0.0, 0.0,
-        -1.0,  1.0,  1.0,    1.0, 0.0, 0.5, 1.0,     1.0, 0.0,
-         1.0,  1.0,  1.0,    1.0, 0.0, 0.5, 1.0,     1.0, 1.0,
-         1.0,  1.0, -1.0,    1.0, 0.0, 0.5, 1.0,     0.0, 1.0
+        // x y z            u v
+        -1.0, -1.0, 0.0,    0.0, 0.0,
+         1.0, -1.0, 0.0,    1.0, 0.0,
+         1.0,  1.0, 0.0,    1.0, 1.0,
+        -1.0,  1.0, 0.0,    0.0, 1.0,
     ];
-
     let vertex_buffer = Buffer::immutable(ctx, BufferType::VertexBuffer, &vertices);
 
-    #[rustfmt::skip]
-    let indices: &[u16] = &[
-         0,  1,  2,   0,  2,  3,
-         6,  5,  4,   7,  6,  4,
-         8,  9, 10,   8, 10, 11,
-        14, 13, 12,  15, 14, 12,
-        16, 17, 18,  16, 18, 19,
-        22, 21, 20,  23, 22, 20
-    ];
-
+    let indices: &[u16] = &[0, 1, 2, 0, 2, 3];
     let index_buffer = Buffer::immutable(ctx, BufferType::IndexBuffer, &indices);
+
     Bindings {
         vertex_buffers: vec![vertex_buffer],
         index_buffer,
@@ -171,23 +116,17 @@ mod offscreen_shader {
 
     pub const VERTEX: &str = r#"#version 100
     attribute vec4 pos;
-    attribute vec4 color;
     attribute vec2 uv;
 
-    varying lowp vec4 frag_color;
     varying lowp vec2 frag_uv;
 
-    uniform mat4 mvp;
-
     void main() {
-        gl_Position = mvp * pos;
-        frag_color = color;
+        gl_Position = pos;
         frag_uv = uv;
     }
     "#;
 
     pub const FRAGMENT: &str = r#"#version 100
-    varying lowp vec4 frag_color;
     varying lowp vec2 frag_uv;
 
     uniform sampler2D tex_y;
@@ -210,27 +149,18 @@ mod offscreen_shader {
         rgb.z = dot(yuv, yuv2b);
 
         gl_FragColor = vec4(rgb, 1.0);
-        // gl_FragColor = vec4(frag_uv, 0.0, 1.0);
-        // gl_FragColor = vec4(texture2D(tex_y, coord).a, 0.0, 0.0, 1.0);
     }
     "#;
 
     pub fn meta() -> ShaderMeta {
         ShaderMeta {
             images: vec!["tex_y".to_string(), "tex_uv".to_string()],
-            uniforms: UniformBlockLayout {
-                uniforms: vec![UniformDesc::new("mvp", UniformType::Mat4)],
-            },
+            uniforms: UniformBlockLayout { uniforms: vec![] },
         }
     }
 
     pub fn new(ctx: &mut Context) -> Shader {
         Shader::new(ctx, VERTEX, FRAGMENT, meta()).unwrap()
-    }
-
-    #[repr(C)]
-    pub struct Uniforms {
-        pub mvp: glam::Mat4,
     }
 }
 
