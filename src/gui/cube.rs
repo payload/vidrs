@@ -1,10 +1,6 @@
-use egui_miniquad::*;
 use miniquad::*;
 
-struct Stage {
-    egui: EguiMq,
-    display_pipeline: Pipeline,
-    display_bind: Bindings,
+pub struct Cube {
     offscreen_pipeline: Pipeline,
     offscreen_bind: Bindings,
     offscreen_pass: RenderPass,
@@ -12,8 +8,8 @@ struct Stage {
     ry: f32,
 }
 
-impl Stage {
-    pub fn new(ctx: &mut Context) -> Stage {
+impl Cube {
+    pub fn new(ctx: &mut Context) -> Self {
         let color_img = Texture::new_render_texture(
             ctx,
             TextureParams {
@@ -84,40 +80,10 @@ impl Stage {
         let index_buffer = Buffer::immutable(ctx, BufferType::IndexBuffer, &indices);
 
         let offscreen_bind = Bindings {
-            vertex_buffers: vec![vertex_buffer.clone()],
-            index_buffer: index_buffer.clone(),
-            images: vec![],
-        };
-
-        let display_bind = Bindings {
             vertex_buffers: vec![vertex_buffer],
             index_buffer: index_buffer,
-            images: vec![color_img],
+            images: vec![],
         };
-
-        let default_shader = Shader::new(
-            ctx,
-            display_shader::VERTEX,
-            display_shader::FRAGMENT,
-            display_shader::meta(),
-        )
-        .unwrap();
-
-        let display_pipeline = Pipeline::with_params(
-            ctx,
-            &[BufferLayout::default()],
-            &[
-                VertexAttribute::new("pos", VertexFormat::Float3),
-                VertexAttribute::new("color0", VertexFormat::Float4),
-                VertexAttribute::new("uv0", VertexFormat::Float2),
-            ],
-            default_shader,
-            PipelineParams {
-                depth_test: Comparison::LessOrEqual,
-                depth_write: true,
-                ..Default::default()
-            },
-        );
 
         let offscreen_shader = Shader::new(
             ctx,
@@ -145,10 +111,7 @@ impl Stage {
             },
         );
 
-        Stage {
-            egui: EguiMq::new(ctx),
-            display_pipeline,
-            display_bind,
+        Self {
             offscreen_pipeline,
             offscreen_bind,
             offscreen_pass,
@@ -156,12 +119,8 @@ impl Stage {
             ry: 0.,
         }
     }
-}
 
-impl EventHandler for Stage {
-    fn update(&mut self, _ctx: &mut Context) {}
-
-    fn draw(&mut self, ctx: &mut Context) {
+    pub fn draw(&mut self, ctx: &mut Context) -> Texture {
         use glam::*;
 
         let (width, height) = ctx.screen_size();
@@ -176,7 +135,7 @@ impl EventHandler for Stage {
         self.ry += 0.03;
         let mvp = view_proj * Mat4::from_rotation_x(self.rx) * Mat4::from_rotation_y(self.ry);
 
-        let vs_params = display_shader::Uniforms { mvp };
+        let vs_params = offscreen_shader::Uniforms { mvp };
 
         // the offscreen pass, rendering an rotating, untextured cube into a render target image
         ctx.begin_pass(
@@ -189,93 +148,7 @@ impl EventHandler for Stage {
         ctx.draw(0, 36, 1);
         ctx.end_render_pass();
 
-        // and the display-pass, rendering a rotating, textured cube, using the
-        // previously rendered offscreen render-target as texture
-        ctx.begin_default_pass(PassAction::clear_color(0.0, 0., 0.45, 1.));
-        ctx.apply_pipeline(&self.display_pipeline);
-        ctx.apply_bindings(&self.display_bind);
-        ctx.apply_uniforms(&vs_params);
-        ctx.draw(0, 36, 1);
-        ctx.end_render_pass();
-
-        let texture_id = self.offscreen_pass.texture(ctx).gl_internal_id() as _;
-
-        self.egui.run(ctx, |_mq_ctx, egui_ctx| {
-            egui::Window::new("vidrs").show(egui_ctx, |ui| {
-                ui.image(
-                    egui::TextureId::User(texture_id),
-                    egui::Vec2::new(256.0, 256.0),
-                );
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if ui.button("Quit").clicked() {
-                        // TODO tell the other that we are exitting
-                        std::process::exit(0);
-                    }
-                }
-            });
-        });
-
-        self.egui.draw(ctx);
-
-        ctx.commit_frame();
-    }
-}
-
-fn main() {
-    miniquad::start(
-        conf::Conf {
-            window_title: "Miniquad".to_string(),
-            ..Default::default()
-        },
-        |mut ctx| Box::new(Stage::new(&mut ctx)),
-    );
-}
-
-mod display_shader {
-    use miniquad::*;
-
-    pub const VERTEX: &str = r#"#version 100
-    attribute vec4 pos;
-    attribute vec4 color0;
-    attribute vec2 uv0;
-
-    varying lowp vec4 color;
-    varying lowp vec2 uv;
-
-    uniform mat4 mvp;
-
-    void main() {
-        gl_Position = mvp * pos;
-        color = color0;
-        uv = uv0;
-    }
-    "#;
-
-    pub const FRAGMENT: &str = r#"#version 100
-    varying lowp vec4 color;
-    varying lowp vec2 uv;
-
-    uniform sampler2D tex;
-
-    void main() {
-        gl_FragColor = color * texture2D(tex, uv);
-    }
-    "#;
-
-    pub fn meta() -> ShaderMeta {
-        ShaderMeta {
-            images: vec!["tex".to_string()],
-            uniforms: UniformBlockLayout {
-                uniforms: vec![UniformDesc::new("mvp", UniformType::Mat4)],
-            },
-        }
-    }
-
-    #[repr(C)]
-    pub struct Uniforms {
-        pub mvp: glam::Mat4,
+        self.offscreen_pass.texture(ctx)
     }
 }
 
@@ -311,5 +184,10 @@ mod offscreen_shader {
                 uniforms: vec![UniformDesc::new("mvp", UniformType::Mat4)],
             },
         }
+    }
+
+    #[repr(C)]
+    pub struct Uniforms {
+        pub mvp: glam::Mat4,
     }
 }

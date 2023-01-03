@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // let gui_thread = std::thread::spawn(|| {
-    gui::run_gui();
+    gui::run_gui(camera_frame.clone());
     // });
 
     let _ = tokio::join!(

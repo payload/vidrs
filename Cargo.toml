@@ -26,4 +26,5 @@ tokio-stream = {version = "0.1.11", features = ["sync"]}
 webrtc = "0.6.0"
 
 [patch.crates-io]
-miniquad = {git = "https://github.com/payload/miniquad.git", branch = "add-luminance-alpha"}
+#miniquad = {git = "https://github.com/payload/miniquad.git", branch = "add-luminance-alpha"}
+miniquad = {path = "../miniquad"}
