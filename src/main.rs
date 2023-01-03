@@ -66,9 +66,8 @@ async fn main() -> anyhow::Result<()> {
         picture_loss_indicator.clone(),
     ));
 
-    // let gui_thread = std::thread::spawn(|| {
+    // must run on main thread unfortunately
     gui::run_gui(camera_frame.clone());
-    // });
 
     let _ = tokio::join!(
         run_camera_task,
@@ -77,7 +76,6 @@ async fn main() -> anyhow::Result<()> {
         webrtc_testapp_task
     );
 
-    // gui_thread.join().expect("gui thread");
     Ok(())
 }
 
