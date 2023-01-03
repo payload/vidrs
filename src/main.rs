@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // let gui_thread = std::thread::spawn(|| {
-        gui::run_gui();
+    gui::run_gui();
     // });
 
     let _ = tokio::join!(
@@ -119,7 +119,12 @@ async fn run_camera(
 ) {
     let mut cam = camera::Camera::default().unwrap();
     // searching for the biggest compatible NV21 video range format, on Mac this is 420v
-    let format = cam.formats().into_iter().filter(|f| &f.pixel_format == "420v").max_by_key(|f| f.height).expect("420v format");
+    let format = cam
+        .formats()
+        .into_iter()
+        .filter(|f| &f.pixel_format == "420v")
+        .max_by_key(|f| f.height)
+        .expect("420v format");
     cam.set_preferred_format(Some(format));
 
     cam.start().unwrap();
