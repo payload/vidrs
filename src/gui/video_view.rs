@@ -3,98 +3,107 @@ use miniquad::*;
 /// Takes NV21 video range frames and draws them into a RGBA texture.
 pub struct VideoView {
     pipeline: Pipeline,
-    quad: Bindings,
+    bindings: Bindings,
     pass: RenderPass,
-    nv21: NV21Textures,
     render_texture: Texture,
+    texture_y: Texture,
+    texture_uv: Texture,
 }
 
 impl VideoView {
     pub fn new(ctx: &mut Context) -> Self {
+        let vertex_attributes = [
+            VertexAttribute::new("pos", VertexFormat::Float3),
+            VertexAttribute::new("uv", VertexFormat::Float2),
+        ];
+        // quad
+        let vertices: &[[f32; 5]] = &[
+            // x y z u v
+            [-1.0, -1.0, 0.0, 0.0, 0.0],
+            [1.0, -1.0, 0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0, 1.0, 1.0],
+            [-1.0, 1.0, 0.0, 0.0, 1.0],
+        ];
+        let vertex_buffer = Buffer::immutable(ctx, BufferType::VertexBuffer, &vertices);
+        let vertex_buffer_layout = BufferLayout {
+            stride: vertex_attributes.iter().map(|a| a.format.byte_len()).sum(),
+            ..Default::default()
+        };
+
+        let indices: &[u16] = &[0, 1, 2, 0, 2, 3];
+        let index_buffer = Buffer::immutable(ctx, BufferType::IndexBuffer, &indices);
+
+        let shader = offscreen_shader::new(ctx);
+        let pipeline = Pipeline::with_params(
+            ctx,
+            &[vertex_buffer_layout],
+            &vertex_attributes,
+            shader,
+            PipelineParams {
+                depth_test: Comparison::LessOrEqual,
+                depth_write: true,
+                ..Default::default()
+            },
+        );
+
+        let texture_y =
+            Texture::from_data_and_format(ctx, &[], texture_params(TextureFormat::Alpha));
+        let texture_uv =
+            Texture::from_data_and_format(ctx, &[], texture_params(TextureFormat::LuminanceAlpha));
         let render_texture = Texture::new_render_texture(ctx, TextureParams::default());
 
         Self {
-            pipeline: new_offscreen_quad_pipeline(ctx),
-            pass: RenderPass::new(ctx, render_texture, None),
-            quad: new_quad(ctx),
-            nv21: NV21Textures::new(ctx, &[], 0, 0),
+            pipeline,
             render_texture,
+            texture_y,
+            texture_uv,
+            pass: RenderPass::new(ctx, render_texture, None),
+            bindings: Bindings {
+                vertex_buffers: vec![vertex_buffer],
+                index_buffer,
+                images: vec![texture_y, texture_uv],
+            },
         }
     }
 
     pub fn width(&self) -> u32 {
-        self.nv21.texture_y.width
+        self.render_texture.width
     }
 
     pub fn height(&self) -> u32 {
-        self.nv21.texture_y.height
+        self.render_texture.height
     }
 
     pub fn update(&mut self, ctx: &mut Context, yuv: &[u8], width: u32, height: u32) {
-        self.nv21.update(ctx, yuv, width, height);
+        let (y, uv) = yuv.split_at((width * height) as _);
 
-        if self.render_texture.width != width || self.render_texture.height != height {
+        if self.width() != width || self.height() != height {
+            self.texture_y.resize(ctx, width, height, Some(y));
+            self.texture_uv.resize(ctx, width / 2, height / 2, Some(uv));
             self.render_texture.resize(ctx, width, height, None);
             self.pass = RenderPass::new(ctx, self.render_texture, None);
+        } else {
+            self.texture_y.update(ctx, y);
+            self.texture_uv.update(ctx, uv);
         }
     }
 
     pub fn draw(&mut self, ctx: &mut Context) -> Texture {
-        if self.quad.images.is_empty() {
-            self.quad.images.push(self.nv21.texture_y);
-            self.quad.images.push(self.nv21.texture_uv);
-        }
-
         ctx.begin_pass(self.pass, PassAction::clear_color(0.0, 1.0, 1.0, 1.));
         ctx.apply_pipeline(&self.pipeline);
-        ctx.apply_bindings(&self.quad);
-        ctx.draw(0, 6, 1); // the number of indices?
+        ctx.apply_bindings(&self.bindings);
+        ctx.draw(0, 6, 1);
         ctx.end_render_pass();
         self.pass.texture(ctx)
     }
 }
 
-fn new_offscreen_quad_pipeline(ctx: &mut Context) -> Pipeline {
-    let vertex_attributes = [
-        VertexAttribute::new("pos", VertexFormat::Float3),
-        VertexAttribute::new("uv", VertexFormat::Float2),
-    ];
-    let buffer_layout = [BufferLayout {
-        stride: 20,
+fn texture_params(format: TextureFormat) -> TextureParams {
+    TextureParams {
+        format,
+        wrap: TextureWrap::Clamp,
+        filter: FilterMode::Nearest,
         ..Default::default()
-    }];
-    let shader = offscreen_shader::new(ctx);
-    Pipeline::with_params(
-        ctx,
-        &buffer_layout,
-        &vertex_attributes,
-        shader,
-        PipelineParams {
-            depth_test: Comparison::LessOrEqual,
-            depth_write: true,
-            ..Default::default()
-        },
-    )
-}
-
-fn new_quad(ctx: &mut Context) -> Bindings {
-    #[rustfmt::skip]
-    let vertices: &[f32] = &[
-        // x y z            u v
-        -1.0, -1.0, 0.0,    0.0, 0.0,
-         1.0, -1.0, 0.0,    1.0, 0.0,
-         1.0,  1.0, 0.0,    1.0, 1.0,
-        -1.0,  1.0, 0.0,    0.0, 1.0,
-    ];
-    let vertex_buffer = Buffer::immutable(ctx, BufferType::VertexBuffer, &vertices);
-
-    let indices: &[u16] = &[0, 1, 2, 0, 2, 3];
-    let index_buffer = Buffer::immutable(ctx, BufferType::IndexBuffer, &indices);
-
-    Bindings {
-        vertex_buffers: vec![vertex_buffer],
-        index_buffer,
-        images: vec![],
     }
 }
 
@@ -146,56 +155,5 @@ mod offscreen_shader {
 
     pub fn new(ctx: &mut Context) -> Shader {
         Shader::new(ctx, VERTEX, FRAGMENT, meta()).unwrap()
-    }
-}
-
-struct NV21Textures {
-    texture_y: Texture,
-    texture_uv: Texture,
-}
-
-impl NV21Textures {
-    pub fn new(ctx: &mut Context, yuv: &[u8], w: u32, h: u32) -> Self {
-        let (y, uv) = yuv.split_at((w * h) as _);
-
-        let texture_y = Texture::from_data_and_format(
-            ctx,
-            y,
-            TextureParams {
-                format: TextureFormat::Alpha,
-                wrap: TextureWrap::Clamp,
-                filter: FilterMode::Nearest,
-                width: w,
-                height: h,
-            },
-        );
-        let texture_uv = Texture::from_data_and_format(
-            ctx,
-            uv,
-            TextureParams {
-                format: TextureFormat::LuminanceAlpha,
-                wrap: TextureWrap::Clamp,
-                filter: FilterMode::Nearest,
-                width: (w / 2),
-                height: (h / 2),
-            },
-        );
-
-        Self {
-            texture_y,
-            texture_uv,
-        }
-    }
-
-    pub fn update(&mut self, ctx: &mut Context, yuv: &[u8], width: u32, height: u32) {
-        let (y, uv) = yuv.split_at((width * height) as _);
-
-        if self.texture_y.width != width || self.texture_y.height != height {
-            self.texture_y.resize(ctx, width, height, Some(y));
-            self.texture_uv.resize(ctx, width / 2, height / 2, Some(uv));
-        } else {
-            self.texture_y.update(ctx, y);
-            self.texture_uv.update(ctx, uv);
-        }
     }
 }
