@@ -637,6 +637,10 @@ impl std::fmt::Display for SampleFormat {
 /// FOURCC is a little crazy. Look at some references to interpret this obfuscation.
 /// Look also into Chromium. There you can see that NV12 is a preferred format, 420v on Mac.
 ///
+/// Also note that 420v means "video range" (420f means "full range") and this means a reduced
+/// range for Y [16, 235] and UV [16, 240] (ITU-R BT 601).
+/// And even full range would be Y [0, 255] and UV [1, 255].
+///
 /// <https://chromium.googlesource.com/libyuv/libyuv/+/HEAD/docs/formats.md>
 /// <https://softron.zendesk.com/hc/en-us/articles/207695697-List-of-FourCC-codes-for-video-codecs>
 /// <http://abcavi.kibi.ru/fourcc.php>

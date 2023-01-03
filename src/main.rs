@@ -10,6 +10,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 mod camera;
 mod codec;
+mod gui;
 mod webrtc;
 
 #[tokio::main]
@@ -49,10 +50,12 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let encode_frames_task = tokio::spawn(encode_frames(
-        camera_frame,
+        camera_frame.clone(),
         encoded_frames_tx,
         picture_loss_indicator.clone(),
     ));
+
+    tokio::spawn(write_frame(camera_frame.clone()));
 
     let http_testapp_task =
         tokio::spawn(webrtc::http_testapp(8080, exchange_tx, exit.resubscribe()));
@@ -63,13 +66,40 @@ async fn main() -> anyhow::Result<()> {
         picture_loss_indicator.clone(),
     ));
 
+    // must run on main thread unfortunately
+    gui::run_gui(camera_frame.clone());
+
     let _ = tokio::join!(
         run_camera_task,
         encode_frames_task,
         http_testapp_task,
         webrtc_testapp_task
     );
+
     Ok(())
+}
+
+async fn write_frame(mut frame: camera::ReceiverSharedFrame) {
+    for _ in 0..10 {
+        let _ = frame.changed().await;
+    }
+
+    let (path, data) = {
+        let frame_borrow = frame.borrow();
+        let Some(frame) = frame_borrow.as_ref() else { return };
+
+        let format = frame.format();
+        let path = format!(
+            "camera_frame.{}.{}.{}",
+            format.pixel_format.as_str(),
+            format.width,
+            format.height
+        );
+        let data = frame.pixels().data.to_vec();
+        (path, data)
+    };
+
+    let _ = tokio::fs::write(path, &data).await;
 }
 
 async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
@@ -86,7 +116,13 @@ async fn run_camera(
     frames_tx: camera::SenderSharedFrame,
 ) {
     let mut cam = camera::Camera::default().unwrap();
-    let format = cam.formats().first().cloned().unwrap();
+    // searching for the biggest compatible NV21 video range format, on Mac this is 420v
+    let format = cam
+        .formats()
+        .into_iter()
+        .filter(|f| &f.pixel_format == "420v")
+        .max_by_key(|f| f.height)
+        .expect("420v format");
     cam.set_preferred_format(Some(format));
 
     cam.start().unwrap();
