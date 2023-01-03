@@ -24,14 +24,14 @@ impl VideoView {
             [1.0, 1.0, 0.0, 1.0, 1.0],
             [-1.0, 1.0, 0.0, 0.0, 1.0],
         ];
-        let vertex_buffer = Buffer::immutable(ctx, BufferType::VertexBuffer, &vertices);
+        let vertex_buffer = Buffer::immutable(ctx, BufferType::VertexBuffer, vertices);
         let vertex_buffer_layout = BufferLayout {
             stride: vertex_attributes.iter().map(|a| a.format.byte_len()).sum(),
             ..Default::default()
         };
 
         let indices: &[u16] = &[0, 1, 2, 0, 2, 3];
-        let index_buffer = Buffer::immutable(ctx, BufferType::IndexBuffer, &indices);
+        let index_buffer = Buffer::immutable(ctx, BufferType::IndexBuffer, indices);
 
         let shader = offscreen_shader::new(ctx);
         let pipeline = Pipeline::with_params(
