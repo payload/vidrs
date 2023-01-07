@@ -1,7 +1,7 @@
-mod camera;
-mod mac_avfoundation;
 mod avfoundation;
+mod camera;
 mod eye;
+mod mac_avfoundation;
 
 pub use camera::*;
 

@@ -1,4 +1,3 @@
-
 use std::sync::Arc;
 
 use super::mac_avfoundation as av;

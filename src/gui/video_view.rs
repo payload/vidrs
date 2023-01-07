@@ -76,6 +76,7 @@ impl VideoView {
 
     pub fn update(&mut self, ctx: &mut Context, yuv: &[u8], width: u32, height: u32) {
         let (y, uv) = yuv.split_at((width * height) as _);
+        let uv = &uv[..(width * height / 2) as usize];
 
         if self.width() != width || self.height() != height {
             self.texture_y.resize(ctx, width, height, Some(y));

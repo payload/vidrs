@@ -41,7 +41,6 @@ impl Backend for Eye {
 
 struct EyeDevice {
     device: Arc<Mutex<Option<eye::hal::platform::Device<'static>>>>,
-    stream: Arc<Mutex<Option<eye::hal::platform::Stream<'static>>>>,
     tx: Arc<Mutex<Option<CameraFrameSender>>>,
     rx: CameraFrameReceiver,
 }
@@ -52,7 +51,6 @@ impl EyeDevice {
 
         Self {
             device: Arc::new(Mutex::new(Some(device))),
-            stream: Arc::new(Mutex::new(None)),
             tx: Arc::new(Mutex::new(Some(tx))),
             rx,
         }
@@ -110,12 +108,16 @@ impl Device for EyeDevice {
                     .next()
                     .expect("next frame")
                     .expect("next frame, no error");
-                tx.send(Some(Arc::new(CameraFrame::new(EyeFrame {
+
+                let frame = EyeFrame {
                     width: stream_descriptor.width,
                     height: stream_descriptor.height,
-                    pixel_format: stream_descriptor.pixfmt.to_string(),
+                    pixel_format: "420v".to_string(),
                     data: data.to_vec(),
-                })))).expect("send frame");
+                };
+
+                tx.send(Some(Arc::new(CameraFrame::new(frame))))
+                    .expect("send frame");
             }
         });
     }
