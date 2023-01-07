@@ -1,4 +1,4 @@
-use std::{any::*, pin::Pin, sync::Arc};
+use std::{any::Any, sync::Arc};
 
 // mod eye;
 
@@ -9,7 +9,6 @@ use mac_avfoundation as av;
 pub fn all_backends() -> Vec<CameraBackend> {
     let mut backends = Vec::new();
     backends.push(CameraBackend::new(AvFoundation));
-    // backends.push(CameraBackend::new(Eye));
     backends
 }
 
@@ -29,34 +28,27 @@ pub struct CameraFrame {
     inner: Arc<dyn Frame>,
 }
 
-pub type CameraFrameSender = tokio::sync::watch::Sender<Option<Arc<CameraFrame>>>;
-pub type CameraFrameReceiver = tokio::sync::watch::Receiver<Option<Arc<CameraFrame>>>;
+pub type CameraFrameSender = tokio::sync::watch::Sender<CameraFrameOption>;
+pub type CameraFrameReceiver = tokio::sync::watch::Receiver<CameraFrameOption>;
+pub type CameraFrameStream = BoxStream<'static, CameraFrameOption>;
+pub type CameraFrameOption = Option<Arc<CameraFrame>>;
 
 struct AvFoundation;
-struct Eye;
 
 pub trait Backend: Any + Send + Sync {
     fn all_devices(&self) -> Vec<CameraDevice>;
 }
 
-// type FrameStream = Arc<Pin<Box<dyn futures::Stream<Item = Option<Arc<CameraFrame>>>>>>;
-// type FrameStream = Pin<Box<dyn futures::Stream<Item = SomeFrame> + Unpin + Send>>;
-type FrameStream = BoxStream<'static, u32>;
-type SomeFrame = Option<Arc<CameraFrame>>;
-
-
 pub trait Device: Any + Send + Sync {
     fn all_streams(&self) -> Vec<CameraStream>;
     fn get_smallest_nv21_video_stream(&self) -> CameraStream;
-    fn start(&mut self, stream: &CameraStream);
-    fn stop(&mut self);
-    fn frames(&self) -> FrameStream;
+    fn start(&self, stream: &CameraStream);
+    fn stop(&self);
+    fn frames(&self) -> CameraFrameStream;
 }
 
 pub trait Stream: Any + Send + Sync {
-    fn as_any(&self) -> &(dyn Any + '_) {
-        &self
-    }
+    fn format(&self) -> (u32, u32, String);
 }
 
 pub trait Frame: Any + Send + Sync {
@@ -98,15 +90,15 @@ impl Device for CameraDevice {
         self.inner.get_smallest_nv21_video_stream()
     }
 
-    fn start(&mut self, stream: &CameraStream) {
+    fn start(&self, stream: &CameraStream) {
         self.inner.start(stream)
     }
 
-    fn stop(&mut self) {
+    fn stop(&self) {
         self.inner.stop()
     }
 
-    fn frames(&self) -> FrameStream {
+    fn frames(&self) -> CameraFrameStream {
         self.inner.frames()
     }
 }
@@ -119,7 +111,11 @@ impl CameraStream {
     }
 }
 
-impl Stream for CameraStream {}
+impl Stream for CameraStream {
+    fn format(&self) -> (u32, u32, String) {
+        self.inner.format()
+    }
+}
 
 impl CameraFrame {
     fn new(frame: impl Frame) -> Self {
@@ -156,21 +152,28 @@ impl Frame for CameraFrame {
 impl Backend for AvFoundation {
     fn all_devices(&self) -> Vec<CameraDevice> {
         if let Ok(device) = av::Camera::default() {
-            vec![CameraDevice::new(device)]
+            vec![CameraDevice::new(std::sync::Mutex::new(device))]
         } else {
             Vec::new()
         }
     }
 }
 
-impl Device for av::Camera {
+impl Device for std::sync::Mutex<av::Camera> {
     fn all_streams(&self) -> Vec<CameraStream> {
-        self.formats().into_iter().map(CameraStream::new).collect()
+        self.lock()
+            .unwrap()
+            .formats()
+            .into_iter()
+            .map(CameraStream::new)
+            .collect()
     }
 
     fn get_smallest_nv21_video_stream(&self) -> CameraStream {
         CameraStream::new(
-            self.formats()
+            self.lock()
+                .unwrap()
+                .formats()
                 .into_iter()
                 .filter(|f| &f.pixel_format == "420v")
                 .max_by_key(|f| f.height)
@@ -178,28 +181,37 @@ impl Device for av::Camera {
         )
     }
 
-    fn start(&mut self, stream: &CameraStream) {
-        let format = stream.inner.as_any().downcast_ref::<av::DeviceFormat>();
-        let format = Some(format.expect("is AVFoundation type").clone());
-        self.set_preferred_format(format);
-        self.start();
+    fn start(&self, stream: &CameraStream) {
+        let mut camera = self.lock().unwrap();
+        let format = camera
+            .formats()
+            .into_iter()
+            .find(|f| stream.format() == CameraStream::new(f.clone()).format());
+        camera.set_preferred_format(format);
+        camera.start().expect("camera start");
     }
 
-    fn stop(&mut self) {
-        self.stop()
+    fn stop(&self) {
+        self.lock().unwrap().stop()
     }
 
-    fn frames(&self) -> FrameStream {
+    fn frames(&self) -> CameraFrameStream {
         use tokio_stream::StreamExt;
+        let camera = self.lock().unwrap();
         Box::pin(
-            self.frames()
+            camera
+                .frames()
                 .map(|f| f.map(|f| Arc::new(CameraFrame::new(f)))),
         )
         // todo!()
     }
 }
 
-impl Stream for av::DeviceFormat {}
+impl Stream for av::DeviceFormat {
+    fn format(&self) -> (u32, u32, String) {
+        (self.width as _, self.height as _, self.pixel_format.clone())
+    }
+}
 
 impl Frame for Arc<av::Frame> {
     fn into_arc(self) -> Arc<dyn Frame> {
@@ -229,3 +241,5 @@ impl Frame for av::Frame {
         self.pixels().data
     }
 }
+
+/*****************************************************************************/
