@@ -24,6 +24,17 @@ pub struct CameraFrame {
     inner: Arc<dyn Frame>,
 }
 
+impl std::fmt::Debug for CameraFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (width, height, pixel_format) = self.size_and_pixel_format();
+        f.debug_struct("CameraFrame")
+            .field("(width)", &width)
+            .field("(height)", &height)
+            .field("(pixel_format)", &pixel_format)
+            .finish()
+    }
+}
+
 pub type CameraFrameSender = tokio::sync::watch::Sender<CameraFrameOption>;
 pub type CameraFrameReceiver = tokio::sync::watch::Receiver<CameraFrameOption>;
 pub type CameraFrameStream = BoxStream<'static, CameraFrameOption>;
