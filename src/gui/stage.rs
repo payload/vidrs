@@ -2,7 +2,7 @@ use egui_miniquad::EguiMq;
 use miniquad::*;
 
 use super::video_view::VideoView;
-use crate::camera::{CameraFrameReceiver, Frame};
+use crate::camera::CameraFrameReceiver;
 
 pub(crate) struct Stage {
     egui_mq: EguiMq,

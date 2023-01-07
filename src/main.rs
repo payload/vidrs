@@ -1,4 +1,3 @@
-use camera::Frame;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
