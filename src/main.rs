@@ -111,8 +111,9 @@ async fn run_camera(
     frames_tx: camera::CameraFrameSender,
 ) {
     use camera::*;
-    let backend = &camera::all_backends()[0];
-    let device = &mut backend.all_devices()[0];
+    let backend = camera::all_backends().pop().unwrap();
+    let device = backend.all_devices().pop().unwrap();
+    let mut device = backend.open_device(device.clone());
     let stream = device.get_smallest_nv21_video_stream();
     device.start(&stream);
     let mut frames = device.frames();

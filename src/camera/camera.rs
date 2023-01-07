@@ -6,6 +6,12 @@ pub struct CameraBackend {
     inner: Arc<dyn Backend>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CameraDeviceDescriptor {
+    Default,
+    Name(String),
+}
+
 pub struct CameraDevice {
     inner: Arc<dyn Device>,
 }
@@ -24,7 +30,8 @@ pub type CameraFrameStream = BoxStream<'static, CameraFrameOption>;
 pub type CameraFrameOption = Option<Arc<CameraFrame>>;
 
 pub trait Backend: Any + Send + Sync {
-    fn all_devices(&self) -> Vec<CameraDevice>;
+    fn all_devices(&self) -> Vec<CameraDeviceDescriptor>;
+    fn open_device(&self, desc: CameraDeviceDescriptor) -> CameraDevice;
 }
 
 pub trait Device: Any + Send + Sync {
@@ -56,8 +63,12 @@ impl CameraBackend {
 }
 
 impl Backend for CameraBackend {
-    fn all_devices(&self) -> Vec<CameraDevice> {
+    fn all_devices(&self) -> Vec<CameraDeviceDescriptor> {
         self.inner.all_devices()
+    }
+
+    fn open_device(&self, desc: CameraDeviceDescriptor) -> CameraDevice {
+        self.inner.open_device(desc)
     }
 }
 
