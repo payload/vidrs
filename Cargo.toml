@@ -13,7 +13,10 @@ egui = "0.19"
 egui-miniquad = "0.12"
 env-libvpx-sys = "5.1.2"
 env_logger = "0.10.0"
+eye = {git = "https://github.com/raymanfx/eye-rs.git", branch = "next"}
+futures = "0.3.25"
 glam = "0.22.0"
+glium = "0.32.1"
 hyper = {version = "0.14.23", features = ["full"]}
 icrate = {version = "0.0.1", features = ["Foundation"]}
 log = "0.4.17"

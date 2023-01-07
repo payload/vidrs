@@ -350,6 +350,7 @@ pub struct Camera {
 }
 
 unsafe impl Send for Camera {}
+unsafe impl Sync for Camera {}
 
 impl Camera {
     pub fn default() -> Result<Self> {

@@ -1,3 +1,4 @@
+use camera::Frame;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -79,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn write_frame(mut frame: camera::ReceiverSharedFrame) {
+async fn write_frame(mut frame: camera::CameraFrameReceiver) {
     for _ in 0..10 {
         let _ = frame.changed().await;
     }
@@ -88,14 +89,9 @@ async fn write_frame(mut frame: camera::ReceiverSharedFrame) {
         let frame_borrow = frame.borrow();
         let Some(frame) = frame_borrow.as_ref() else { return };
 
-        let format = frame.format();
-        let path = format!(
-            "camera_frame.{}.{}.{}",
-            format.pixel_format.as_str(),
-            format.width,
-            format.height
-        );
-        let data = frame.pixels().data.to_vec();
+        let (width, height, pixel_format) = frame.size_and_pixel_format();
+        let path = format!("camera_frame.{width}x{height}.{pixel_format}");
+        let data = frame.data().to_vec();
         (path, data)
     };
 
@@ -113,20 +109,14 @@ async fn exit_on_ctrl_c(exit_tx: broadcast::Sender<()>) {
 async fn run_camera(
     exit_tx: broadcast::Sender<()>,
     exit: broadcast::Receiver<()>,
-    frames_tx: camera::SenderSharedFrame,
+    frames_tx: camera::CameraFrameSender,
 ) {
-    let mut cam = camera::Camera::default().unwrap();
-    // searching for the biggest compatible NV21 video range format, on Mac this is 420v
-    let format = cam
-        .formats()
-        .into_iter()
-        .filter(|f| &f.pixel_format == "420v")
-        .max_by_key(|f| f.height)
-        .expect("420v format");
-    cam.set_preferred_format(Some(format));
-
-    cam.start().unwrap();
-    let mut frames = cam.frames();
+    use camera::*;
+    let backend = &camera::all_backends()[0];
+    let device = &mut backend.all_devices()[0];
+    let stream = device.get_smallest_nv21_video_stream();
+    device.start(&stream);
+    let mut frames = device.frames();
     let mut first_frame = true;
 
     loop {
@@ -141,7 +131,7 @@ async fn run_camera(
                 first_frame = false;
                 log::debug!(
                     "run_camera: Started receiving camera frames. {:?}",
-                    frame.format()
+                    frame.size_and_pixel_format()
                 );
             }
 
@@ -158,7 +148,7 @@ async fn run_camera(
         }
     }
 
-    cam.stop();
+    device.stop();
 
     exit_tx.send(()).expect("exit");
 }
@@ -177,7 +167,7 @@ impl std::fmt::Debug for EncodedFrame {
 }
 
 async fn encode_frames(
-    frame: camera::ReceiverSharedFrame,
+    frame: camera::CameraFrameReceiver,
     packets: mpsc::Sender<EncodedFrame>,
     picture_loss_indicator: Arc<AtomicBool>,
 ) {
@@ -189,8 +179,8 @@ async fn encode_frames(
         let Some(frame) = frame else { continue };
         log::trace!("encode_frames: recv frame");
 
-        let format = frame.format();
-        encoder = reconfigure_encoder(encoder, &format);
+        let (width, height, _) = frame.size_and_pixel_format();
+        encoder = reconfigure_encoder(encoder, width, height);
         let Some(encoder) = encoder.as_mut() else { panic!("no encoder"); };
         let start_time = start_time.get_or_insert_with(Instant::now);
         let pts = start_time.elapsed().as_millis() as _;
@@ -198,7 +188,7 @@ async fn encode_frames(
 
         let mut encoded_data = {
             let image = encoder
-                .wrap_image(frame.pixels().data, codec::ImageFormat::NV12)
+                .wrap_image(frame.data(), codec::ImageFormat::NV12)
                 .expect("wrap image");
             encoder
                 .encode(pts, image, force_keyframe)
@@ -212,7 +202,7 @@ async fn encode_frames(
             .frames()
             .inspect(|frame| {
                 if frame.keyframe() {
-                    log::debug!("encode_frames: Encoded key frame: {:?}", format)
+                    log::debug!("encode_frames: Encoded key frame {width}x{height}")
                 }
             })
             .map(|frame| EncodedFrame {
@@ -241,10 +231,10 @@ async fn encode_frames(
 
 fn reconfigure_encoder(
     encoder: Option<codec::Vp8Encoder>,
-    format: &camera::SampleFormat,
+    width: u32,
+    height: u32,
 ) -> Option<codec::Vp8Encoder> {
-    let config = codec::Vp8Config::new(format.width as u32, format.height as u32, [1, 1000], 5000)
-        .expect("config");
+    let config = codec::Vp8Config::new(width, height, [1, 1000], 5000).expect("config");
 
     if let Some(encoder) = encoder {
         if encoder.config() == &config {

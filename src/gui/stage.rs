@@ -2,16 +2,16 @@ use egui_miniquad::EguiMq;
 use miniquad::*;
 
 use super::video_view::VideoView;
-use crate::camera::ReceiverSharedFrame;
+use crate::camera::{CameraFrameReceiver, Frame};
 
 pub(crate) struct Stage {
     egui_mq: EguiMq,
     video_view: VideoView,
-    camera_frame: ReceiverSharedFrame,
+    camera_frame: CameraFrameReceiver,
 }
 
 impl Stage {
-    pub(crate) fn new(ctx: &mut Context, camera_frame: ReceiverSharedFrame) -> Self {
+    pub(crate) fn new(ctx: &mut Context, camera_frame: CameraFrameReceiver) -> Self {
         Self {
             egui_mq: EguiMq::new(ctx),
             video_view: VideoView::new(ctx),
@@ -24,10 +24,8 @@ impl EventHandler for Stage {
     fn update(&mut self, ctx: &mut Context) {
         if let Ok(true) = self.camera_frame.has_changed() {
             if let Some(frame) = &*self.camera_frame.borrow() {
-                let width = frame.format().width;
-                let height = frame.format().height;
-                let yuv = frame.pixels().data;
-                self.video_view.update(ctx, yuv, width as _, height as _);
+                let (width, height, _) = frame.size_and_pixel_format();
+                self.video_view.update(ctx, frame.data(), width, height);
             }
         }
     }
