@@ -2898,6 +2898,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rgb2yuv420"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cf3ad431593a2bb204ed1c609814aa9f95b169f8cef6b811b03261097f2453b"
+
+[[package]]
 name = "ring"
 version = "0.16.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3762,6 +3768,7 @@ dependencies = [
  "log",
  "miniquad",
  "objc2",
+ "rgb2yuv420",
  "serde_json",
  "thiserror",
  "tokio",

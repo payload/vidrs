@@ -109,11 +109,24 @@ impl Device for EyeDevice {
                     .expect("next frame")
                     .expect("next frame, no error");
 
+                let width = stream_descriptor.width;
+                let height = stream_descriptor.height;
+
+                let data = if data.len() == (width * height * 3) as usize {
+                    // eye openpnp backend produces only rgb24 m(
+                    // and since vp8 encoding and video view only support yuv I need to convert it
+                    // again
+                    // TODO support different color formats, find 420v support for linux and windows
+                    rgb2yuv420::convert_rgb_to_yuv420sp_nv12(data, width, height, 3)
+                } else {
+                    data.to_vec()
+                };
+
                 let frame = EyeFrame {
-                    width: stream_descriptor.width,
-                    height: stream_descriptor.height,
+                    width,
+                    height,
                     pixel_format: "420v".to_string(),
-                    data: data.to_vec(),
+                    data,
                 };
 
                 tx.send(Some(Arc::new(CameraFrame::new(frame))))
