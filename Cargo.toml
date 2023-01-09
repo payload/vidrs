@@ -5,6 +5,11 @@ license = "Apache-2.0 OR MIT"
 name = "vidrs"
 version = "0.1.0"
 
+[features]
+default = ["nokhwa"]
+eye = ["dep:eye"]
+nokhwa = ["dep:nokhwa"]
+
 [dependencies]
 anyhow = "1.0.68"
 bitflags = "1.3.2"
@@ -13,7 +18,7 @@ egui = "0.19"
 egui-miniquad = "0.12"
 env-libvpx-sys = "5.1.2"
 env_logger = "0.10.0"
-eye = {git = "https://github.com/raymanfx/eye-rs.git", branch = "next"}
+eye = {git = "https://github.com/raymanfx/eye-rs.git", branch = "next", optional = true}
 futures = "0.3.25"
 glam = "0.22.0"
 glium = "0.32.1"
@@ -21,6 +26,7 @@ hyper = {version = "0.14.23", features = ["full"]}
 icrate = {version = "0.0.1", features = ["Foundation"]}
 log = "0.4.17"
 miniquad = "^0.3.12"
+nokhwa = {path = "../nokhwa", default-features = false, features = ["flume", "input-avfoundation", "serialize"], optional = true}
 objc2 = "0.3.0-beta.3"
 rgb2yuv420 = "0.2.3"
 serde_json = "1.0.91"
