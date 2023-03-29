@@ -11,7 +11,7 @@ bitflags = "1.3.2"
 bytes = "1.3.0"
 egui = "0.19"
 egui-miniquad = "0.12"
-env-libvpx-sys = "5.1.2"
+env-libvpx-sys = {version="5.1.2", features = ["generate"]}
 env_logger = "0.10.0"
 glam = "0.22.0"
 hyper = {version = "0.14.23", features = ["full"]}

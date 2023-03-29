@@ -2,7 +2,10 @@
 
 ## How to use
 
-On a MacOS system with an attached camera you can call `cargo run` and go to the mentioned server address http://localhost:8080.
+On a MacOS system with an attached camera you can do the following steps:
+* `brew install pkg-config libvpx`
+* `cargo run`
+* open the displayed address http://localhost:8080
 
 ## Features
 
